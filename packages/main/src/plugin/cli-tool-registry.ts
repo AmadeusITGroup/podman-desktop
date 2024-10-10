@@ -18,6 +18,7 @@
 
 import type {
   CliTool,
+  CliToolInfo as CliToolInfoApi,
   CliToolInstaller,
   CliToolOptions,
   CliToolSelectUpdate,
@@ -29,24 +30,27 @@ import type { CliToolExtensionInfo, CliToolInfo } from '/@api/cli-tool-info.js';
 
 import type { ApiSenderType } from './api.js';
 import { CliToolImpl } from './cli-tool-impl.js';
+import type { Event } from './events/emitter.js';
+import { Emitter } from './events/emitter.js';
 import { Disposable } from './types/disposable.js';
-import type { Exec } from './util/exec.js';
 
 export class CliToolRegistry {
-  constructor(
-    private apiSender: ApiSenderType,
-    private exec: Exec,
-  ) {}
+  constructor(private apiSender: ApiSenderType) {}
 
   private cliTools = new Map<string, CliToolImpl>();
   private cliToolsUpdater = new Map<string, CliToolUpdate | CliToolSelectUpdate>();
   private cliToolsInstaller = new Map<string, CliToolInstaller>();
 
+  private readonly _onDidCliToolsChange = new Emitter<void>();
+  readonly onDidCliToolsChange: Event<void> = this._onDidCliToolsChange.event;
+
   createCliTool(extensionInfo: CliToolExtensionInfo, options: CliToolOptions): CliTool {
-    const cliTool = new CliToolImpl(this.apiSender, this.exec, extensionInfo, this, options);
+    const cliTool = new CliToolImpl(extensionInfo, this, options);
     this.cliTools.set(cliTool.id, cliTool);
     this.apiSender.send('cli-tool-create');
+    this._onDidCliToolsChange.fire();
     cliTool.onDidUpdateVersion(() => this.apiSender.send('cli-tool-change', cliTool.id));
+    cliTool.onDidUninstall(() => this.apiSender.send('cli-tool-change', cliTool.id));
     return cliTool;
   }
 
@@ -82,6 +86,15 @@ export class CliToolRegistry {
     }
   }
 
+  async uninstallCliTool(id: string, logger: Logger): Promise<void> {
+    const cliToolInstaller = this.cliToolsInstaller.get(id);
+    if (cliToolInstaller) {
+      await cliToolInstaller.doUninstall(logger);
+      // notify the tool has been uninstalled
+      this.cliTools.get(id)?.uninstall();
+    }
+  }
+
   async selectCliToolVersionToUpdate(id: string): Promise<string> {
     const cliToolUpdater = this.cliToolsUpdater.get(id);
     if (!cliToolUpdater || this.isUpdaterToPredefinedVersion(cliToolUpdater)) {
@@ -104,6 +117,7 @@ export class CliToolRegistry {
 
   disposeCliTool(cliTool: CliToolImpl): void {
     this.cliTools.delete(cliTool.id);
+    this._onDidCliToolsChange.fire();
     this.cliToolsUpdater.delete(cliTool.id);
     this.cliToolsInstaller.delete(cliTool.id);
     this.apiSender.send('cli-tool-remove', cliTool.id);
@@ -112,8 +126,8 @@ export class CliToolRegistry {
   getCliToolInfos(): CliToolInfo[] {
     return Array.from(this.cliTools.values()).map(cliTool => {
       const installer = this.cliToolsInstaller.get(cliTool.id);
-      // if the installer has been registered, enable install
-      const canInstall = !!installer;
+      // if the installer has been registered and the source is different from external enable install/uninstall
+      const canInstall = !!installer && cliTool.installationSource !== 'external';
 
       const updater = this.cliToolsUpdater.get(cliTool.id);
       // if updater is the one with a default version that the tool will use to get updated we use it
@@ -136,5 +150,34 @@ export class CliToolRegistry {
         canInstall,
       };
     });
+  }
+
+  getCliTool(id: string): CliToolInfoApi | undefined {
+    const cliTool = this.cliTools.get(id);
+    if (!cliTool) {
+      return undefined;
+    }
+    return this.convertToCliToolInfo(cliTool);
+  }
+
+  getCliTools(): CliToolInfoApi[] {
+    return Array.from(this.cliTools.values()).map(cliTool => {
+      return this.convertToCliToolInfo(cliTool);
+    });
+  }
+
+  private convertToCliToolInfo(cliTool: CliTool): CliToolInfoApi {
+    return {
+      id: cliTool.id,
+      name: cliTool.name,
+      displayName: cliTool.displayName,
+      markdownDescription: cliTool.markdownDescription,
+      images: cliTool.images,
+      version: cliTool.version,
+      extensionInfo: {
+        id: cliTool.extensionInfo.id,
+        label: cliTool.extensionInfo.label,
+      },
+    };
   }
 }

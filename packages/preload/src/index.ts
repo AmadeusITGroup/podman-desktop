@@ -56,6 +56,7 @@ import type {
 import type { ContainerInspectInfo } from '/@api/container-inspect-info';
 import type { ContainerStatsInfo } from '/@api/container-stats-info';
 import type { ContributionInfo } from '/@api/contribution-info';
+import type { DockerContextInfo, DockerSocketMappingStatusInfo } from '/@api/docker-compatibility-info';
 import type { ExtensionInfo } from '/@api/extension-info';
 import type { HistoryInfo } from '/@api/history-info';
 import type { IconInfo } from '/@api/icon-info';
@@ -65,6 +66,7 @@ import type { ImageInfo } from '/@api/image-info';
 import type { ImageInspectInfo } from '/@api/image-inspect-info';
 import type { ImageSearchOptions, ImageSearchResult, ImageTagsListOptions } from '/@api/image-registry';
 import type { KubeContext } from '/@api/kubernetes-context';
+import type { ContextGeneralState, ResourceName } from '/@api/kubernetes-contexts-states';
 import type { ManifestCreateOptions, ManifestInspectInfo, ManifestPushOptions } from '/@api/manifest-info';
 import type { NetworkInspectInfo } from '/@api/network-info';
 import type { NotificationCard, NotificationCardOptions } from '/@api/notification';
@@ -77,7 +79,9 @@ import type {
   ProviderInfo,
   ProviderKubernetesConnectionInfo,
 } from '/@api/provider-info';
+import type { ProxyState } from '/@api/proxy';
 import type { PullEvent } from '/@api/pull-event';
+import type { ReleaseNotesInfo } from '/@api/release-notes-info';
 import type { ViewInfoUI } from '/@api/view-info';
 import type { VolumeInspectInfo, VolumeListInfo } from '/@api/volume-info';
 import type { WebviewInfo } from '/@api/webview-info';
@@ -98,8 +102,7 @@ import type {
   GenerateKubeResult,
   KubernetesGeneratorArgument,
   KubernetesGeneratorSelector,
-} from '../../main/src/plugin/kube-generator-registry';
-import type { ContextGeneralState, ResourceName } from '../../main/src/plugin/kubernetes-context-state.js';
+} from '../../main/src/plugin/kubernetes/kube-generator-registry';
 import type { Guide } from '../../main/src/plugin/learning-center/learning-center-api';
 import type { Menu } from '../../main/src/plugin/menu-registry';
 import type { MessageBoxOptions, MessageBoxReturnValue } from '../../main/src/plugin/message-box';
@@ -210,6 +213,18 @@ export function initExposure(): void {
   // Handle protocol to install extensions by delegating to the renderer process
   ipcRenderer.on('podman-desktop-protocol:install-extension', (_, extensionId: string) => {
     apiSender.send('install-extension:from-id', extensionId);
+  });
+
+  contextBridge.exposeInMainWorld('clearTasks', async (): Promise<void> => {
+    return ipcInvoke('tasks:clear-all');
+  });
+
+  contextBridge.exposeInMainWorld('clearTask', async (taskId: string): Promise<void> => {
+    return ipcInvoke('tasks:clear', taskId);
+  });
+
+  contextBridge.exposeInMainWorld('executeTask', async (taskId: string): Promise<void> => {
+    return ipcInvoke('tasks:execute', taskId);
   });
 
   contextBridge.exposeInMainWorld('extensionSystemIsReady', async (): Promise<boolean> => {
@@ -369,6 +384,13 @@ export function initExposure(): void {
       providerContainerConnectionInfo: ProviderContainerConnectionInfo,
     ): Promise<{ Id: string; Names: string[] }[]> => {
       return ipcInvoke('container-provider-registry:listContainersFromEngine', providerContainerConnectionInfo);
+    },
+  );
+
+  contextBridge.exposeInMainWorld(
+    'resolveShortnameImage',
+    async (providerContainerConnectionInfo: ProviderContainerConnectionInfo, shortName: string): Promise<string[]> => {
+      return ipcInvoke('container-provider-registry:resolveShortnameImage', providerContainerConnectionInfo, shortName);
     },
   );
 
@@ -736,10 +758,10 @@ export function initExposure(): void {
     return ipcInvoke('proxy:getSettings');
   });
 
-  contextBridge.exposeInMainWorld('isProxyEnabled', async (): Promise<boolean> => {
-    return ipcInvoke('proxy:isEnabled');
+  contextBridge.exposeInMainWorld('getProxyState', async (): Promise<ProxyState> => {
+    return ipcInvoke('proxy:getState');
   });
-  contextBridge.exposeInMainWorld('setProxyState', async (state: boolean): Promise<void> => {
+  contextBridge.exposeInMainWorld('setProxyState', async (state: ProxyState): Promise<void> => {
     return ipcInvoke('proxy:setState', state);
   });
 
@@ -842,7 +864,8 @@ export function initExposure(): void {
       params: { [key: string]: any },
       key: symbol,
       keyLogger: (key: symbol, eventName: 'log' | 'warn' | 'error' | 'finish', args: string[]) => void,
-      tokenId?: number,
+      tokenId: number | undefined,
+      taskId: number | undefined,
     ): Promise<void> => {
       onDataCallbacksTaskConnectionId++;
       onDataCallbacksTaskConnectionKeys.set(onDataCallbacksTaskConnectionId, key);
@@ -853,6 +876,7 @@ export function initExposure(): void {
         params,
         onDataCallbacksTaskConnectionId,
         tokenId,
+        taskId,
       );
     },
   );
@@ -875,7 +899,8 @@ export function initExposure(): void {
       params: { [key: string]: any },
       key: symbol,
       keyLogger: (key: symbol, eventName: 'log' | 'warn' | 'error' | 'finish', args: string[]) => void,
-      tokenId?: number,
+      tokenId: number | undefined,
+      taskId: number | undefined,
     ): Promise<void> => {
       onDataCallbacksTaskConnectionId++;
       onDataCallbacksTaskConnectionKeys.set(onDataCallbacksTaskConnectionId, key);
@@ -886,6 +911,7 @@ export function initExposure(): void {
         params,
         onDataCallbacksTaskConnectionId,
         tokenId,
+        taskId,
       );
     },
   );
@@ -1042,7 +1068,8 @@ export function initExposure(): void {
       params: { [key: string]: any },
       key: symbol,
       keyLogger: (key: symbol, eventName: 'log' | 'warn' | 'error' | 'finish', args: string[]) => void,
-      tokenId?: number,
+      tokenId: number | undefined,
+      taskId: number | undefined,
     ): Promise<void> => {
       onDataCallbacksTaskConnectionId++;
       onDataCallbacksTaskConnectionKeys.set(onDataCallbacksTaskConnectionId, key);
@@ -1054,6 +1081,7 @@ export function initExposure(): void {
         params,
         onDataCallbacksTaskConnectionId,
         tokenId,
+        taskId,
       );
     },
   );
@@ -1138,6 +1166,18 @@ export function initExposure(): void {
     },
   );
 
+  contextBridge.exposeInMainWorld('updatePodmanDesktop', async (): Promise<void> => {
+    return ipcInvoke('app:update');
+  });
+
+  contextBridge.exposeInMainWorld('podmanDesktopUpdateAvailable', async (): Promise<boolean> => {
+    return ipcInvoke('app:update-available');
+  });
+
+  contextBridge.exposeInMainWorld('podmanDesktopGetReleaseNotes', async (): Promise<ReleaseNotesInfo> => {
+    return ipcInvoke('app:get-release-notes');
+  });
+
   contextBridge.exposeInMainWorld('getProviderInfos', async (): Promise<ProviderInfo[]> => {
     return ipcInvoke('provider-registry:getProviderInfos');
   });
@@ -1155,12 +1195,13 @@ export function initExposure(): void {
     async (
       id: string,
       key: symbol,
+      version: string,
       keyLogger: (key: symbol, eventName: 'log' | 'warn' | 'error' | 'finish', args: string[]) => void,
     ): Promise<void> => {
       onDataCallbacksTaskConnectionId++;
       onDataCallbacksTaskConnectionKeys.set(onDataCallbacksTaskConnectionId, key);
       onDataCallbacksTaskConnectionLogs.set(onDataCallbacksTaskConnectionId, keyLogger);
-      return ipcInvoke('cli-tool-registry:updateCliTool', id, onDataCallbacksTaskConnectionId);
+      return ipcInvoke('cli-tool-registry:updateCliTool', id, version, onDataCallbacksTaskConnectionId);
     },
   );
 
@@ -1172,13 +1213,28 @@ export function initExposure(): void {
     'installCliTool',
     async (
       id: string,
+      versionToInstall: string,
       key: symbol,
       keyLogger: (key: symbol, eventName: 'log' | 'warn' | 'error' | 'finish', args: string[]) => void,
     ): Promise<void> => {
       onDataCallbacksTaskConnectionId++;
       onDataCallbacksTaskConnectionKeys.set(onDataCallbacksTaskConnectionId, key);
       onDataCallbacksTaskConnectionLogs.set(onDataCallbacksTaskConnectionId, keyLogger);
-      return ipcInvoke('cli-tool-registry:installCliTool', id, onDataCallbacksTaskConnectionId);
+      return ipcInvoke('cli-tool-registry:installCliTool', id, versionToInstall, onDataCallbacksTaskConnectionId);
+    },
+  );
+
+  contextBridge.exposeInMainWorld(
+    'uninstallCliTool',
+    async (
+      id: string,
+      key: symbol,
+      keyLogger: (key: symbol, eventName: 'log' | 'warn' | 'error' | 'finish', args: string[]) => void,
+    ): Promise<void> => {
+      onDataCallbacksTaskConnectionId++;
+      onDataCallbacksTaskConnectionKeys.set(onDataCallbacksTaskConnectionId, key);
+      onDataCallbacksTaskConnectionLogs.set(onDataCallbacksTaskConnectionId, keyLogger);
+      return ipcInvoke('cli-tool-registry:uninstallCliTool', id, onDataCallbacksTaskConnectionId);
     },
   );
 
@@ -1422,6 +1478,10 @@ export function initExposure(): void {
     apiSender.send('dev-tools:open-webview', webviewId);
   });
 
+  ipcRenderer.on('context-menu:visible', (_, visible: boolean) => {
+    apiSender.send('context-menu:visible', visible);
+  });
+
   // Handle callback on dialogs by calling the callback once we get the answer
   ipcRenderer.on('dialog:open-save-dialog-response', (_, dialogId: string, result: string | string[] | undefined) => {
     // grab from stored map
@@ -1566,7 +1626,7 @@ export function initExposure(): void {
 
   contextBridge.exposeInMainWorld(
     'sendShowQuickPickValues',
-    async (quickPickId: number, selectedIndexes: number[]): Promise<void> => {
+    async (quickPickId: number, selectedIndexes?: number[]): Promise<void> => {
       return ipcInvoke('showQuickPick:values', quickPickId, selectedIndexes);
     },
   );
@@ -2021,10 +2081,6 @@ export function initExposure(): void {
     return ipcInvoke('os:getHostCpu');
   });
 
-  contextBridge.exposeInMainWorld('setNativeTheme', async (themeSource: 'system' | 'light' | 'dark'): Promise<void> => {
-    return ipcInvoke('native:theme', themeSource);
-  });
-
   contextBridge.exposeInMainWorld('sendFeedback', async (feedback: FeedbackProperties): Promise<void> => {
     return ipcInvoke('feedback:send', feedback);
   });
@@ -2203,6 +2259,21 @@ export function initExposure(): void {
 
   contextBridge.exposeInMainWorld('contextCollectAllValues', async (): Promise<Record<string, unknown>> => {
     return ipcInvoke('context:collectAllValues');
+  });
+
+  contextBridge.exposeInMainWorld(
+    'getSystemDockerSocketMappingStatus',
+    async (): Promise<DockerSocketMappingStatusInfo> => {
+      return ipcInvoke('docker-compatibility:getSystemDockerSocketMappingStatus');
+    },
+  );
+
+  contextBridge.exposeInMainWorld('getDockerContexts', async (): Promise<DockerContextInfo[]> => {
+    return ipcInvoke('docker-compatibility:listDockerContexts');
+  });
+
+  contextBridge.exposeInMainWorld('switchDockerContext', async (contextName: string): Promise<DockerContextInfo[]> => {
+    return ipcInvoke('docker-compatibility:switchDockerContext', contextName);
   });
 }
 

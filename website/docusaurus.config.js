@@ -1,6 +1,7 @@
 // @ts-check
 // Note: type annotations allow type checking and IDEs autocompletion
 import { resolve } from 'node:path';
+import { createNotesFiles } from './release-notes-parser';
 import Storybook from './storybook';
 
 const lightCodeTheme = require('prism-react-renderer').themes.github;
@@ -24,6 +25,9 @@ const config = {
   trailingSlash: false,
   markdown: {
     mermaid: true,
+    parseFrontMatter: async params => {
+      return createNotesFiles(params);
+    },
   },
   themes: ['@docusaurus/theme-mermaid'],
   plugins: [
@@ -290,6 +294,10 @@ const config = {
               '/docs/extensions/write/adding-icons',
             ],
           },
+          {
+            to: '/',
+            from: '/core-values',
+          },
         ],
       },
     ],
@@ -300,6 +308,14 @@ const config = {
         path: 'api',
         routeBasePath: 'api',
         sidebarPath: resolve('./sidebars-api.js'),
+      },
+    ],
+    [
+      '@docusaurus/plugin-content-docs',
+      {
+        id: 'tutorial',
+        path: 'tutorial',
+        routeBasePath: 'tutorial',
       },
     ],
     [
@@ -380,11 +396,11 @@ const config = {
             position: 'left',
             label: 'Documentation',
           },
-          { to: '/core-values', label: 'Core Values', position: 'left' },
           { to: '/features', label: 'Features', position: 'left' },
           { to: '/downloads', label: 'Downloads', position: 'left' },
           { to: '/extend', label: 'Extend', position: 'left' },
           { to: '/blog', label: 'Blog', position: 'left' },
+          { to: '/tutorial', label: 'Tutorials', position: 'left' },
           {
             href: 'https://github.com/containers/podman-desktop',
             className: 'header-github-link',

@@ -18,64 +18,80 @@
 
 /* eslint-disable @typescript-eslint/no-empty-function */
 
+import type { Event } from '@podman-desktop/api';
 import { beforeEach, expect, test, vi } from 'vitest';
 
-import type { CommandRegistry } from '/@/plugin/command-registry.js';
-import type { StatusBarRegistry } from '/@/plugin/statusbar/statusbar-registry.js';
+import type { NavigationManager } from '/@/plugin/navigation/navigation-manager.js';
+import type { Task, TaskAction, TaskUpdateEvent } from '/@/plugin/tasks/tasks.js';
+import type { TaskState, TaskStatus } from '/@api/taskInfo.js';
 
-import type { ApiSenderType } from '../api.js';
 import { ProgressImpl, ProgressLocation } from './progress-impl.js';
-import { TaskManager } from './task-manager.js';
+import type { TaskManager } from './task-manager.js';
 
-const apiSenderSendMock = vi.fn();
-const statusBarRegistry: StatusBarRegistry = {
-  setEntry: vi.fn(),
-} as unknown as StatusBarRegistry;
+const taskManager = {
+  createTask: vi.fn(),
+} as unknown as TaskManager;
 
-const commandRegistry: CommandRegistry = {
-  registerCommand: vi.fn(),
-} as unknown as CommandRegistry;
+const navigationManager = {
+  hasRoute: vi.fn(),
+  navigateToRoute: vi.fn(),
+} as unknown as NavigationManager;
+
+class TestTaskImpl implements Task {
+  constructor(
+    public readonly id: string,
+    public name: string,
+    public state: TaskState,
+    public status: TaskStatus,
+  ) {
+    this.started = 0;
+  }
+
+  started: number;
+  error?: string;
+  progress?: number;
+  action?: TaskAction;
+
+  get onUpdate(): Event<TaskUpdateEvent> {
+    throw new Error('not implemented');
+  }
+  dispose(): void {
+    throw new Error('not implemented');
+  }
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
 test('Should create a task and report update', async () => {
-  const apiSender = {
-    send: apiSenderSendMock,
-  } as unknown as ApiSenderType;
-  const progress = new ProgressImpl(new TaskManager(apiSender, statusBarRegistry, commandRegistry));
+  const task = new TestTaskImpl('test-task-id', 'test-title', 'running', 'in-progress');
+  vi.mocked(taskManager.createTask).mockReturnValue(task);
+
+  const progress = new ProgressImpl(taskManager, navigationManager);
   await progress.withProgress({ location: ProgressLocation.TASK_WIDGET, title: 'My task' }, async () => 0);
-  expect(apiSenderSendMock).toBeCalledTimes(2);
-  expect(apiSenderSendMock).toHaveBeenNthCalledWith(1, 'task-created', expect.anything());
-  expect(apiSenderSendMock).toHaveBeenNthCalledWith(2, 'task-updated', expect.objectContaining({ state: 'completed' }));
+
+  expect(task.status).toBe('success');
 });
 
-test('Should create a task and report 2 updates', async () => {
-  const apiSender = {
-    send: apiSenderSendMock,
-  } as unknown as ApiSenderType;
-  const progress = new ProgressImpl(new TaskManager(apiSender, statusBarRegistry, commandRegistry));
+test('Should create a task and report progress', async () => {
+  const task = new TestTaskImpl('test-task-id', 'test-title', 'running', 'in-progress');
+  vi.mocked(taskManager.createTask).mockReturnValue(task);
+
+  const progress = new ProgressImpl(taskManager, navigationManager);
   await progress.withProgress({ location: ProgressLocation.TASK_WIDGET, title: 'My task' }, async progress => {
     progress.report({ increment: 50 });
   });
-  expect(apiSenderSendMock).toBeCalledTimes(3);
-  expect(apiSenderSendMock).toHaveBeenNthCalledWith(1, 'task-created', expect.anything());
-  expect(apiSenderSendMock).toHaveBeenNthCalledWith(3, 'task-updated', expect.anything());
-  expect(apiSenderSendMock).toHaveBeenNthCalledWith(3, 'task-updated', expect.objectContaining({ state: 'completed' }));
+
+  expect(task.status).toBe('success');
+  expect(task.progress).toBe(50);
 });
 
 test('Should create a task and propagate the exception', async () => {
-  const createTaskMock = vi.fn();
-  const updateTaskMock = vi.fn();
-  const taskManager = {
-    createTask: createTaskMock,
-    updateTask: updateTaskMock,
-  } as unknown as TaskManager;
+  const task = new TestTaskImpl('test-task-id', 'test-title', 'running', 'in-progress');
+  vi.mocked(taskManager.createTask).mockReturnValue(task);
 
-  createTaskMock.mockImplementation(() => ({}));
-
-  const progress = new ProgressImpl(taskManager);
+  const progress = new ProgressImpl(taskManager, navigationManager);
 
   await expect(
     progress.withProgress({ location: ProgressLocation.TASK_WIDGET, title: 'My task' }, async () => {
@@ -83,25 +99,15 @@ test('Should create a task and propagate the exception', async () => {
     }),
   ).rejects.toThrowError('dummy error');
 
-  expect(updateTaskMock).toHaveBeenCalledTimes(1);
-  expect(updateTaskMock).toHaveBeenCalledWith({
-    error: 'Error: dummy error',
-    state: 'completed',
-    status: 'failure',
-  });
+  expect(taskManager.createTask).toHaveBeenCalledTimes(1);
+  expect(task.error).toBe('Error: dummy error');
 });
 
 test('Should create a task and propagate the result', async () => {
-  const createTaskMock = vi.fn();
-  const updateTaskMock = vi.fn();
-  const taskManager = {
-    createTask: createTaskMock,
-    updateTask: updateTaskMock,
-  } as unknown as TaskManager;
+  const task = new TestTaskImpl('test-task-id', 'test-title', 'running', 'in-progress');
+  vi.mocked(taskManager.createTask).mockReturnValue(task);
 
-  createTaskMock.mockImplementation(() => ({}));
-
-  const progress = new ProgressImpl(taskManager);
+  const progress = new ProgressImpl(taskManager, navigationManager);
 
   const result: string = await progress.withProgress<string>(
     { location: ProgressLocation.TASK_WIDGET, title: 'My task' },
@@ -111,32 +117,59 @@ test('Should create a task and propagate the result', async () => {
   );
   expect(result).toBe('dummy result');
 
-  expect(updateTaskMock).toHaveBeenCalledTimes(1);
-  expect(updateTaskMock).toHaveBeenCalledWith({
-    state: 'completed',
-    status: 'success',
-  });
+  expect(task.status).toBe('success');
 });
 
 test('Should update the task name', async () => {
-  const createTaskMock = vi.fn();
-  const updateTaskMock = vi.fn();
-  const taskManager = {
-    createTask: createTaskMock,
-    updateTask: updateTaskMock,
-  } as unknown as TaskManager;
+  const task = new TestTaskImpl('test-task-id', 'test-title', 'running', 'in-progress');
+  vi.mocked(taskManager.createTask).mockReturnValue(task);
 
-  createTaskMock.mockImplementation(() => ({}));
-  const progress = new ProgressImpl(taskManager);
+  const progress = new ProgressImpl(taskManager, navigationManager);
 
   await progress.withProgress<void>({ location: ProgressLocation.TASK_WIDGET, title: 'My task' }, async progress => {
     progress.report({ message: 'New title' });
   });
 
-  expect(updateTaskMock).toHaveBeenCalledTimes(2);
-  expect(updateTaskMock).toHaveBeenLastCalledWith({
-    name: 'New title',
-    state: 'completed',
-    status: 'success',
+  expect(task.name).toBe('New title');
+  expect(task.status).toBe('success');
+});
+
+test('Should create a task with a navigation action', async () => {
+  vi.mocked(navigationManager.hasRoute).mockReturnValue(true);
+
+  const task = new TestTaskImpl('test-task-id', 'test-title', 'running', 'in-progress');
+  const progress = new ProgressImpl(taskManager, navigationManager);
+
+  let taskAction: TaskAction | undefined;
+  vi.mocked(taskManager.createTask).mockImplementation(options => {
+    taskAction = options?.action;
+    return task;
   });
+
+  await progress.withProgress<string>(
+    {
+      location: ProgressLocation.TASK_WIDGET,
+      title: 'My task',
+      details: {
+        routeId: 'dummy-route-id',
+        routeArgs: ['hello', 'world'],
+      },
+    },
+    async () => {
+      return 'dummy result';
+    },
+  );
+
+  await vi.waitFor(() => {
+    expect(taskAction).toBeDefined();
+  });
+
+  expect(taskAction?.name).toBe('View');
+  expect(taskAction?.execute).toBeInstanceOf(Function);
+
+  // execute the task action
+  taskAction?.execute(task);
+
+  // ensure the arguments and routeId is properly used
+  expect(navigationManager.navigateToRoute).toHaveBeenCalledWith('dummy-route-id', 'hello', 'world');
 });

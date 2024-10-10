@@ -7,6 +7,7 @@ import { onDestroy, onMount } from 'svelte';
 import { router } from 'tinro';
 
 import { ensureRestrictedSecurityContext } from '/@/lib/pod/pod-utils';
+import { lastPage } from '/@/stores/breadcrumb';
 import type { V1Route } from '/@api/openshift-types';
 
 import MonacoEditor from '../editor/MonacoEditor.svelte';
@@ -134,7 +135,7 @@ onDestroy(() => {
 });
 
 function goBackToHistory(): void {
-  window.history.go(-1);
+  router.goto($lastPage.path);
 }
 
 function openPodDetails(): void {
@@ -363,8 +364,6 @@ async function deployToKube() {
   }
 }
 
-$: bodyPod && updateKubeResult();
-
 // Update bodyPod.metadata.labels.app to be the same as bodyPod.metadata.name
 // If statement required as bodyPod.metadata is undefined when bodyPod is undefined
 $: {
@@ -372,6 +371,8 @@ $: {
     bodyPod.metadata.labels.app = bodyPod.metadata.name;
   }
 }
+
+$: bodyPod && updateKubeResult();
 
 function updateKubeResult() {
   kubeDetails = jsYaml.dump(bodyPod, { noArrayIndent: true, quotingType: '"', lineWidth: -1 });
@@ -393,7 +394,13 @@ function updateKubeResult() {
       <div class="pt-2 pb-4">
         <label for="contextToUse" class="block mb-1 text-sm font-medium text-[var(--pd-content-card-header-text)]"
           >Pod Name:</label>
-        <Input bind:value={bodyPod.metadata.name} name="podName" id="podName" class="w-full" required />
+        <Input
+          bind:value={bodyPod.metadata.name}
+          name="podName"
+          aria-label="Pod Name"
+          id="podName"
+          class="w-full"
+          required />
       </div>
     {/if}
 
@@ -405,6 +412,7 @@ function updateKubeResult() {
         class="text-[var(--pd-content-card-text)] text-sm ml-1"
         name="useServices"
         id="useServices"
+        title="Use Services"
         required>
         Replace .hostPort exposure on containers by Services. It is the recommended way to expose ports, as a cluster
         policy may prevent to use hostPort.</Checkbox>
@@ -418,7 +426,7 @@ function updateKubeResult() {
         class="text-[var(--pd-content-card-text)] text-sm ml-1"
         name="useRestricted"
         id="useRestricted"
-        title="Use restricted security context"
+        title="Use Restricted Security Context"
         required>
         Update Kubernetes manifest to respect the Pod security <Link
           on:click={() =>
@@ -454,6 +462,7 @@ function updateKubeResult() {
           name="serviceName"
           id="serviceName"
           class=" cursor-default w-full p-2 outline-none text-sm bg-[var(--pd-select-bg)] rounded-sm text-[var(--pd-content-card-text)]"
+          aria-label="Select a Port"
           required>
           <option value="" disabled selected>Select a port</option>
           {#each containerPortArray as port}
@@ -476,6 +485,7 @@ function updateKubeResult() {
           class="text-[var(--pd-content-card-text)] text-sm ml-1"
           name="useRoutes"
           id="useRoutes"
+          title="Use Routes"
           required>
           Create OpenShift routes to get access to the exposed ports of this pod.</Checkbox>
       </div>
@@ -488,6 +498,7 @@ function updateKubeResult() {
         <Input
           bind:value={defaultContextName}
           name="defaultContextName"
+          aria-label="Kubernetes Context"
           id="defaultContextName"
           readonly
           class="w-full"
@@ -501,6 +512,7 @@ function updateKubeResult() {
           >Kubernetes Namespace:</label>
         <select
           class="w-full p-2 outline-none text-sm bg-[var(--pd-select-bg)] rounded-sm text-[var(--pd-content-card-text)]"
+          aria-label="Select a Kubernetes Namespace"
           name="namespaceChoice"
           bind:value={currentNamespace}>
           {#each allNamespaces.items as namespace}
@@ -513,10 +525,10 @@ function updateKubeResult() {
     {/if}
 
     {#if deployWarning}
-      <WarningMessage class="text-sm" error={deployWarning} />
+      <WarningMessage aria-label="Deploy Warning Message" class="text-sm" error={deployWarning} />
     {/if}
     {#if deployError}
-      <ErrorMessage class="text-sm" error={deployError} />
+      <ErrorMessage aria-label="Deploy Error Message" class="text-sm" error={deployError} />
     {/if}
 
     {#if !deployStarted}
@@ -524,6 +536,7 @@ function updateKubeResult() {
         <Button
           on:click={() => deployToKube()}
           class="w-full"
+          aria-label="Deploy"
           icon={faRocket}
           disabled={bodyPod?.metadata?.name === ''}>
           Deploy
@@ -537,12 +550,15 @@ function updateKubeResult() {
           <div>Created pod:</div>
           {#if openshiftConsoleURL && createdPod?.metadata?.name}
             <div class="justify-end flex flex-1">
-              <Link class="text-sm" icon={faExternalLink} on:click={() => openOpenshiftConsole()}
-                >Open in OpenShift console</Link>
+              <Link
+                class="text-sm"
+                aria-label="Open in OpenShift Console"
+                icon={faExternalLink}
+                on:click={() => openOpenshiftConsole()}>Open in OpenShift console</Link>
             </div>
           {/if}
         </div>
-        <div class="text-[var(--pd-content-card-text)]">
+        <div class="text-[var(--pd-content-card-text)]" role="region" aria-label="Pod Deployment Status Info">
           {#if createdPod.metadata?.name}
             <p class="pt-2">Name: {createdPod.metadata.name}</p>
           {/if}
@@ -597,9 +613,11 @@ function updateKubeResult() {
 
     {#if deployFinished}
       <div class="pt-4 flex flex-row space-x-2 justify-end">
-        <Button on:click={() => goBackToHistory()}>Done</Button>
-        <Button on:click={() => openPodDetails()} disabled={!createdPod?.metadata?.name || !defaultContextName}
-          >Open Pod</Button>
+        <Button on:click={() => goBackToHistory()} aria-label="Done">Done</Button>
+        <Button
+          on:click={() => openPodDetails()}
+          disabled={!createdPod?.metadata?.name || !defaultContextName}
+          aria-label="Open Pod">Open Pod</Button>
       </div>
     {/if}
   </div>

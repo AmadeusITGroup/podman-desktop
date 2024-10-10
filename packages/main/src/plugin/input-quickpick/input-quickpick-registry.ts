@@ -1,5 +1,5 @@
 /**********************************************************************
- * Copyright (C) 2023 Red Hat, Inc.
+ * Copyright (C) 2023-2024 Red Hat, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -110,22 +110,28 @@ export class InputQuickPickRegistry {
   }
 
   // this method is called by the frontend when the user has selected a value in QuickPick
-  onQuickPickValuesSelected(id: number, indexes: number[]): void {
+  onQuickPickValuesSelected(id: number, indexes?: number[]): void {
     // get the callback
     const callback = this.callbacksQuickPicks.get(id);
 
     // if there is a callback
     if (callback) {
-      if (callback.options?.canPickMany) {
+      if (!indexes) {
+        // no selection
+        callback.deferred.resolve(undefined);
+      } else if (callback.options?.canPickMany) {
         const allItems = indexes.map(index => callback.items[index]);
         // resolve the promise
         callback.deferred.resolve(allItems);
-      } else {
+      } else if (indexes[0] !== undefined) {
         // grab item
         const item = callback.items[indexes[0]];
 
         // resolve the promise
         callback.deferred.resolve(item);
+      } else {
+        // error
+        callback.deferred.reject('no item');
       }
 
       // remove the callback

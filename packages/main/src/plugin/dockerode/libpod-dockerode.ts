@@ -312,7 +312,7 @@ export interface ContainerStore {
   stopped: number;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-interface
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface GraphOptions {}
 
 export interface GraphStatus {
@@ -364,6 +364,7 @@ export interface LibPod {
   startPod(podId: string): Promise<void>;
   stopPod(podId: string): Promise<void>;
   removePod(podId: string, options?: PodRemoveOptions): Promise<void>;
+  resolveShortnameImage(shortname: string): Promise<{ Names: string[] }>;
   restartPod(podId: string): Promise<void>;
   generateKube(names: string[]): Promise<string>;
   playKube(yamlContentFilePath: string): Promise<PlayKubeInfo>;
@@ -524,7 +525,7 @@ export class LibpodDockerode {
     prototypeOfDockerode.pruneAllImages = function (): Promise<unknown> {
       const optsf = {
         path: '/v4.2.0/libpod/images/prune?all=true&', // this works
-        // For some reason the below doesn't work? TODO / help / fixme
+        // For some reason the below doesn't work
         // options: {all: 'true'}, // this doesn't work
         method: 'POST',
         statusCodes: {
@@ -966,6 +967,27 @@ export class LibpodDockerode {
         options: {},
       };
 
+      return new Promise((resolve, reject) => {
+        this.modem.dial(optsf, (err: unknown, data: unknown) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(data);
+        });
+      });
+    };
+
+    prototypeOfDockerode.resolveShortnameImage = function (shortname: string): Promise<unknown> {
+      const optsf = {
+        path: `/v5.0.0/libpod/images/${shortname}/resolve`,
+        method: 'GET',
+        statusCodes: {
+          // in the documentation it says code 204, but only code 200 works as intended
+          200: true,
+          400: 'bad parameter',
+          500: 'server error',
+        },
+      };
       return new Promise((resolve, reject) => {
         this.modem.dial(optsf, (err: unknown, data: unknown) => {
           if (err) {

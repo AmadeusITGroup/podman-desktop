@@ -17,15 +17,21 @@
  ***********************************************************************/
 
 /**
- * The Podman Desktop API provides a way to interact with Podman Desktop.
+ * The Podman Desktop API is intended to be consumed by extensions interacting with Podman Desktop.
  *
- * This file `extension-api.d.ts` is automatically generated from typedoc comments
- * in the source code and provided [on our website](https://podman-desktop.io/api).
+ * This documentation is automatically generated from typedoc comments
+ * in the source code `extension-api.d.ts` and provided [on our website](https://podman-desktop.io/api).
+ *
+ * This type declaration file can be installed from [the npm registry](https://www.npmjs.com/package/@podman-desktop/api).
  *
  * For more information, see the main
  * [Podman Desktop developing extensions documentation](https://podman-desktop.io/docs/extensions/developing).
  *
  * @example
+ * ```shell
+ * $ npm install @podman-desktop/api
+ * ```
+ *
  * ```typescript
  * import * as api from '@podman-desktop/api';
  *
@@ -88,7 +94,7 @@ declare module '@podman-desktop/api' {
      * on dispose.
      * @param callOnDispose Function that disposes something.
      */
-    // eslint-disable-next-line @typescript-eslint/ban-types
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
     constructor(callOnDispose: Function);
 
     /**
@@ -112,16 +118,42 @@ declare module '@podman-desktop/api' {
   }
 
   /**
-   * Event to subscribe
+   * Interface to subscribe specific events.
+   *
+   * @example
+   * This is an example for an hypothetic function `onDidValueChange` implementing
+   * the `Event` interface.
+   *
+   * ```typescript
+   * import * as api from '@podman-desktop/api';
+   *
+   * class MyValueManager {
+   *   private value: boolean | undefined = undefined;
+   *
+   *   private onChange(e: boolean) {
+   *     this.value = e;
+   *     console.log(this.value);
+   *   }
+   *
+   *   public init(subscriptions: api.Disposable[]) {
+   *     onDidValueChange(this.onChange, this, subscriptions);
+   *   }
+   * }
+   *
+   * export async function activate(extensionContext: api.ExtensionContext): Promise<void> {
+   *   const myValueManager = new MyValueManager();
+   *   myValueManager.init(extensionContext.subscriptions);
+   * }
+   * ```
    */
   export interface Event<T> {
     /**
      * @param listener The listener function will be called when the event happens.
      * @param thisArgs The `this`-argument which will be used when calling the event listener.
-     * @param disposables An array to which a {@link Disposable} will be added.
+     * @param disposables An array to which the resulting {@link Disposable} will be added.
      * @return A disposable which unsubscribes the event listener.
      */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any,  sonarjs/prefer-function-type
     (listener: (e: T) => any, thisArgs?: any, disposables?: Disposable[]): Disposable;
   }
 
@@ -358,11 +390,16 @@ declare module '@podman-desktop/api' {
 
   export interface ContainerProviderConnection {
     name: string;
+    displayName?: string;
     type: 'docker' | 'podman';
     endpoint: ContainerProviderConnectionEndpoint;
     lifecycle?: ProviderConnectionLifecycle;
     status(): ProviderConnectionStatus;
     vmType?: string;
+    /**
+     * the vmTypeDisplayName property cannot be set if vmType is undefined
+     */
+    vmTypeDisplayName?: string;
   }
 
   export interface PodCreatePortOptions {
@@ -661,9 +698,35 @@ declare module '@podman-desktop/api' {
     onDidUpdateDetectionChecks: Event<ProviderDetectionCheck[]>;
   }
 
+  /**
+   * The commands module provides functions to register and execute commands
+   *
+   * @example
+   * ```typescript
+   * import * as api from '@podman-desktop/api';
+   *
+   * export async function activate(extensionContext: api.ExtensionContext): Promise<void> {
+   *
+   *   const myCommand = api.commands.registerCommand(
+   *     'extension-name.my-command',
+   *     (arg1: string, arg2: number) => {
+   *       console.log('my-command executed with', arg1, arg2);
+   *     },
+   *   );
+   *
+   *   extensionContext.subscriptions.push(myCommand);
+   *
+   *   // [...]
+   *
+   *   api.commands.executeCommand('extension-name.my-command', 'a-string', 1001);
+   * }
+   * ```
+   */
   export namespace commands {
     /**
      * Define a command, to be executed later, either by calling {@link commands.executeCommand} or by referencing its name in the `command` field of a {@link StatusBarItem}.
+     *
+     * For examples, see {@link commands} and {@link window.createStatusBarItem}.
      *
      * @param command the name of the command. The name must be unique over all extensions. It is recommended to prefix this name with the name of the extension, to avoid conflicts with commands from other extensions.
      * @param callback the command to execute
@@ -674,7 +737,9 @@ declare module '@podman-desktop/api' {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     export function registerCommand(command: string, callback: (...args: any[]) => any, thisArg?: any): Disposable;
     /**
-     * Execute a command, previously registered with {@link commands.registerCommand}
+     * Execute a command, previously registered with {@link commands.registerCommand}.
+     *
+     * For an example, see {@link commands}.
      *
      * @param command the name used for registering the command
      * @param rest the parameters to pass to the command
@@ -870,14 +935,72 @@ declare module '@podman-desktop/api' {
     noProxy: string | undefined;
   }
 
+  /**
+   * The proxy module provides functions to set and get (immediately and reactively) HTTP proxy configuration.
+   * Note that it is not possible to change the state (enabled or disabled) of the proxy settings from the API.
+   *
+   * @example
+   *
+   * ```typescript
+   * import * as api from '@podman-desktop/api';
+   *
+   * export async function activate(extensionContext: api.ExtensionContext): Promise<void> {
+   *   const handleProxyConfiguration = (e: boolean | undefined, s: api.ProxySettings | undefined) => {
+   *     console.log(e, s);
+   *   }
+   *
+   *   let enabled: boolean | undefined = undefined;
+   *   let settings: api.ProxySettings | undefined = undefined;
+   *
+   *   // Configuration changes
+   *   extensionContext.subscriptions.push(
+   *     api.proxy.onDidStateChange((e: boolean) => {
+   *       enabled = e;
+   *       handleProxyConfiguration(enabled, settings);
+   *     }),
+   *     api.proxy.onDidUpdateProxy((s: api.ProxySettings) => {
+   *       settings = s;
+   *       handleProxyConfiguration(enabled, settings);
+   *     }),
+   *   );
+   *   // Initial configuration
+   *   enabled = api.proxy.isEnabled();
+   *   settings = api.proxy.getProxySettings();
+   *   handleProxyConfiguration(enabled, settings);
+   * }
+   * ```
+   */
   export namespace proxy {
+    /**
+     * Return the current settings of the HTTP proxy.
+     *
+     * For an example, see {@link proxy}.
+     */
     export function getProxySettings(): ProxySettings | undefined;
+    /**
+     * Register new HTTP proxy settings. Note that registering new settings does not change the state (enabled or disabled) of the proxy settings.
+     */
     export function setProxy(proxySettings: ProxySettings): Promise<void>;
-    // Podman Desktop has updated the settings, propagates the changes to the provider.
+    /**
+     * Listen for changes on the proxy settings. The listener will be called with the new settings
+     * every time the settings change.
+     *
+     * For examples, see {@link proxy} and {@link Event}.
+     */
     export const onDidUpdateProxy: Event<ProxySettings>;
 
-    // The state of the proxy
+    /**
+     * Return the current state (enabled or disabled) of the proxy settings.
+     *
+     * For an example, see {@link proxy}.
+     */
     export function isEnabled(): boolean;
+    /**
+     * Listen for changes on the proxy state (enabled or disabled). The listener will be called with the new state
+     * every time the state changes.
+     *
+     * For examples, see {@link proxy} and {@link Event}.
+     */
     export const onDidStateChange: Event<boolean>;
   }
 
@@ -1070,6 +1193,39 @@ declare module '@podman-desktop/api' {
      * button.
      */
     cancellable?: boolean;
+
+    /**
+     * You may specify a navigation object, making the task having a
+     * navigate action that the user can trigger.
+     * @example
+     * ```ts
+     * import { window, type ProgressLocation } from '@podman-desktop/api';
+     *
+     * await window.withProgress<string>(
+     *     {
+     *       location: ProgressLocation.TASK_WIDGET,
+     *       title: 'My task',
+     *       details: {
+     *         routeId: 'dummy-route-id',
+     *         routeArgs: ['hello', 'world'],
+     *       }
+     *     },
+     *     async () => {
+     *       return 'dummy result';
+     *     },
+     *   );
+     * ```
+     */
+    details?: {
+      /**
+       * The routeId used in {@link navigation.register}
+       */
+      routeId: string;
+      /**
+       * The arguments to provide the route
+       */
+      routeArgs: string[];
+    };
   }
 
   /**
@@ -1988,6 +2144,24 @@ declare module '@podman-desktop/api' {
      * @param alignment The alignment of the item.
      * @param priority The priority of the item. Higher values mean more to the left or more to the right.
      * @return A new status bar item.
+     *
+     * @example
+     * ```typescript
+     * import * as api from '@podman-desktop/api';
+     *
+     * export async function activate(extensionContext: api.ExtensionContext): Promise<void> {
+     *   const statusBarItem = api.window.createStatusBarItem();
+     *   statusBarItem.text = 'Information';
+     *   statusBarItem.tooltip = 'A problem occured';
+     *   statusBarItem.command = 'extension-name.my-command';
+     *   statusBarItem.iconClass = 'fa fa-exclamation-triangle';
+     *   extensionContext.subscriptions.push(
+     *     api.commands.registerCommand('extension-name.my-command', () => { console.log('command executed'); }),
+     *     statusBarItem,
+     *   );
+     *   statusBarItem.show();
+     * }
+     * ```
      */
     export function createStatusBarItem(alignment?: StatusBarAlignment, priority?: number): StatusBarItem;
 
@@ -2426,6 +2600,12 @@ declare module '@podman-desktop/api' {
     Options?: { [key: string]: string };
   }
 
+  interface DeviceMapping {
+    CgroupPermissions: string;
+    PathInContainer: string;
+    PathOnHost: string;
+  }
+
   interface HostConfig {
     AutoRemove?: boolean;
     Binds?: string[];
@@ -2479,7 +2659,7 @@ declare module '@podman-desktop/api' {
     CpuQuota?: number;
     CpusetCpus?: string;
     CpusetMems?: string;
-    Devices?: unknown;
+    Devices?: DeviceMapping[];
     DeviceCgroupRules?: string[];
     DeviceRequests?: DeviceRequest[];
     DiskQuota?: number;
@@ -2913,7 +3093,7 @@ declare module '@podman-desktop/api' {
     /**
      * An object mapping ports to an empty object in the form: `{"<port>/<tcp|udp|sctp>": {}}`
      */
-    // eslint-disable-next-line @typescript-eslint/ban-types
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
     ExposedPorts?: { [port: string]: {} };
 
     /**
@@ -4356,30 +4536,36 @@ declare module '@podman-desktop/api' {
   export interface CliToolInstaller {
     selectVersion: () => Promise<string>;
     doInstall: (logger: Logger) => Promise<void>;
+    doUninstall: (logger: Logger) => Promise<void>;
   }
 
   export type CliToolState = 'registered';
 
-  export interface CliTool extends Disposable {
-    id: string;
-    name: string;
-    displayName: string;
-    markdownDescription: string;
+  export interface CliTool extends CliToolInfo, Disposable {
     state: CliToolState;
-    images: ProviderImages;
-    extensionInfo: {
-      id: string;
-      label: string;
-    };
-
     updateVersion(version: CliToolUpdateOptions): void;
     onDidUpdateVersion: Event<string>;
+
+    onDidUninstall: Event<void>;
 
     // register cli update flow
     registerUpdate(update: CliToolUpdate | CliToolSelectUpdate): Disposable;
 
     // register cli installer
     registerInstaller(installer: CliToolInstaller): Disposable;
+  }
+
+  export interface CliToolInfo {
+    id: string;
+    name: string;
+    displayName: string;
+    markdownDescription: string;
+    images: ProviderImages;
+    version?: string;
+    extensionInfo: {
+      id: string;
+      label: string;
+    };
   }
 
   /**
@@ -4395,6 +4581,23 @@ declare module '@podman-desktop/api' {
      * @returns CliTool instance
      */
     export function createCliTool(options: CliToolOptions): CliTool;
+
+    /**
+     * given an id, return the corresponding CLI Tool
+     * @param id cli tool
+     */
+    export function getCliTool(id: string): CliToolInfo | undefined;
+
+    /**
+     * All cli tools currently known to the system.
+     */
+    export const all: readonly CliToolInfo[];
+
+    /**
+     * An event which fires when `cli.all` changes. This can happen when cli are
+     * installed, uninstalled, enabled or disabled.
+     */
+    export const onDidChange: Event<void>;
   }
 
   /**
@@ -4521,6 +4724,42 @@ declare module '@podman-desktop/api' {
      * Navigate to the Edit Provider Container Connection page
      */
     export function navigateToEditProviderContainerConnection(connection: ProviderContainerConnection): Promise<void>;
+
+    /**
+     * Allow to define custom route for an extension.
+     *
+     * @remarks
+     * The commandId used must have been registered through {@link commands.registerCommand}
+     *
+     * @example
+     * ```ts
+     * import { navigation, commands } from '@podman-desktop/api';
+     *
+     * commands.registerCommand('redirect-download-command', (trackingId: string) => {
+     *   // todo: do something with the trackingId
+     * });
+     *
+     * // register the route
+     * navigation.register('download-page', 'redirect-download-command');
+     *
+     * // when needed call the navigate with the route id registered to
+     * // trigger the command
+     * navigation.navigate('download-page', 'dummy-tracking-id');
+     * ```
+     *
+     * @param routeId a unique string value that could be used in {@link navigation.navigate}
+     * @param commandId the command that will be executed on navigate
+     */
+    export function register(routeId: string, commandId: string): Disposable;
+
+    /**
+     * Allow extension to navigate to a custom route.
+     * The route needs to have been registered using {@link navigation.register}
+     *
+     * @param routeId the identifier of the route to use
+     * @param args the arguments to provide to the command linked to the routeId
+     */
+    export function navigate(routeId: string, ...args: unknown[]): Promise<void>;
   }
 
   /**

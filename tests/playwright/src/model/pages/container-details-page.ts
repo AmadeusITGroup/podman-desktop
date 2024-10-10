@@ -22,12 +22,15 @@ import { expect as playExpect } from '@playwright/test';
 import { handleConfirmationDialog } from '../../utility/operations';
 import { ContainerState } from '../core/states';
 import { ContainersPage } from './containers-page';
+import { DeployToKubernetesPage } from './deploy-to-kubernetes-page';
 import { DetailsPage } from './details-page';
 
 export class ContainerDetailsPage extends DetailsPage {
   readonly stopButton: Locator;
   readonly deleteButton: Locator;
   readonly imageLink: Locator;
+  readonly deployButton: Locator;
+  readonly startButton: Locator;
 
   static readonly SUMMARY_TAB = 'Summary';
   static readonly LOGS_TAB = 'Logs';
@@ -40,6 +43,8 @@ export class ContainerDetailsPage extends DetailsPage {
     this.stopButton = this.controlActions.getByRole('button').and(this.page.getByLabel('Stop Container'));
     this.deleteButton = this.controlActions.getByRole('button').and(this.page.getByLabel('Delete Container'));
     this.imageLink = this.header.getByRole('link', { name: 'Image Details' });
+    this.deployButton = this.controlActions.getByRole('button', { name: 'Deploy to Kubernetes' });
+    this.startButton = this.controlActions.getByRole('button', { name: 'Start Container', exact: true });
   }
 
   async getState(): Promise<string> {
@@ -51,18 +56,9 @@ export class ContainerDetailsPage extends DetailsPage {
     return ContainerState.Unknown;
   }
 
-  async stopContainer(failIfStopped = false): Promise<void> {
-    try {
-      await playExpect.poll(async () => await this.getState()).toBe(ContainerState.Running);
-      await playExpect(this.stopButton).toBeEnabled();
-      await this.stopButton.click();
-    } catch (error) {
-      if (failIfStopped) {
-        throw Error(
-          `Container is not running, its state is: ${await this.getState()}, stop button not available: ${error}`,
-        );
-      }
-    }
+  async stopContainer(): Promise<void> {
+    await playExpect(this.stopButton).toBeEnabled();
+    await this.stopButton.click();
   }
 
   async deleteContainer(): Promise<ContainersPage> {
@@ -79,5 +75,11 @@ export class ContainerDetailsPage extends DetailsPage {
     const portsCell = portsRow.getByRole('cell').nth(1);
     await playExpect(portsCell).toBeVisible();
     return await portsCell.innerText();
+  }
+
+  async openDeployToKubernetesPage(): Promise<DeployToKubernetesPage> {
+    await playExpect(this.deployButton).toBeVisible();
+    await this.deployButton.click();
+    return new DeployToKubernetesPage(this.page);
   }
 }

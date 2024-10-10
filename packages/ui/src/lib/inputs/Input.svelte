@@ -6,7 +6,7 @@ import Fa from 'svelte-fa';
 export let placeholder: string | undefined = undefined;
 export let id: string | undefined = undefined;
 export let name: string | undefined = undefined;
-export let value: string | number | undefined = undefined;
+export let value: string | undefined = undefined;
 export let readonly: boolean = false;
 export let required: boolean = false;
 export let clearable: boolean = false;
@@ -54,7 +54,7 @@ async function onClear(): Promise<void> {
       bind:this={element}
       on:input
       on:keypress
-      class="grow px-0.5 outline-0 bg-[var(--pd-input-field-bg)] placeholder:text-[color:var(--pd-input-field-placeholder-text)] overflow-hidden {inputClass ??
+      class="w-full px-0.5 outline-0 bg-[var(--pd-input-field-bg)] placeholder:text-[color:var(--pd-input-field-placeholder-text)] overflow-hidden {inputClass ??
         ''}"
       class:text-[color:var(--pd-input-field-focused-text)]={!disabled}
       class:text-[color:var(--pd-input-field-disabled-text)]={disabled}

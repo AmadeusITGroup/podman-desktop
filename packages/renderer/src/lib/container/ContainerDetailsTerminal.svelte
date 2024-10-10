@@ -15,14 +15,33 @@ import { getTerminalTheme } from '../../../../main/src/plugin/terminal-theme';
 import NoLogIcon from '../ui/NoLogIcon.svelte';
 import type { ContainerInfoUI } from './ContainerInfoUI';
 
-export let container: ContainerInfoUI;
-export let screenReaderMode = false;
+interface ContainerDetailsTerminalProps {
+  container: ContainerInfoUI;
+  screenReaderMode?: boolean;
+}
+
+let { container, screenReaderMode = false }: ContainerDetailsTerminalProps = $props();
 let terminalXtermDiv: HTMLDivElement;
 let shellTerminal: Terminal;
 let currentRouterPath: string;
 let sendCallbackId: number | undefined;
 let terminalContent: string = '';
 let serializeAddon: SerializeAddon;
+let lastState = $state('');
+let containerState = $state(container);
+
+$effect(() => {
+  containerState = container;
+  if (lastState === 'STARTING' && containerState.state === 'RUNNING') {
+    restartTerminal();
+  }
+  lastState = container.state;
+});
+
+async function restartTerminal() {
+  await executeShellIntoContainer();
+  window.dispatchEvent(new Event('resize'));
+}
 
 // update current route scheme
 router.subscribe(route => {
@@ -140,7 +159,11 @@ onDestroy(() => {
 });
 </script>
 
-<div class="h-full" bind:this={terminalXtermDiv} class:hidden={container.state !== 'RUNNING'}></div>
+<div
+  class="h-full p-[5px] pr-0 bg-[var(--pd-terminal-background)]"
+  bind:this={terminalXtermDiv}
+  class:hidden={container.state !== 'RUNNING'}>
+</div>
 
 <EmptyScreen
   hidden={container.state === 'RUNNING'}

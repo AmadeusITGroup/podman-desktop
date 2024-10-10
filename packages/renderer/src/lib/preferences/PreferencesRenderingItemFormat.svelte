@@ -1,5 +1,6 @@
 <script lang="ts">
 import { ErrorMessage } from '@podman-desktop/ui-svelte';
+import { onDestroy, onMount } from 'svelte';
 
 import BooleanItem from '/@/lib/preferences/item-formats/BooleanItem.svelte';
 import EnumItem from '/@/lib/preferences/item-formats/EnumItem.svelte';
@@ -7,10 +8,11 @@ import FileItem from '/@/lib/preferences/item-formats/FileItem.svelte';
 import NumberItem from '/@/lib/preferences/item-formats/NumberItem.svelte';
 import SliderItem from '/@/lib/preferences/item-formats/SliderItem.svelte';
 import StringItem from '/@/lib/preferences/item-formats/StringItem.svelte';
+import { onDidChangeConfiguration } from '/@/stores/configurationProperties';
 
 import type { IConfigurationPropertyRecordedSchema } from '../../../../main/src/plugin/configuration-registry';
 import Markdown from '../markdown/Markdown.svelte';
-import { getNormalizedDefaultNumberValue } from './Util';
+import { getInitialValue, getNormalizedDefaultNumberValue } from './Util';
 
 let invalidText: string | undefined = undefined;
 export let invalidRecord = (_error: string) => {};
@@ -31,6 +33,28 @@ let recordUpdateTimeout: NodeJS.Timeout;
 let recordValue: string | boolean | number | undefined;
 $: recordValue;
 $: updateResetButtonVisibility?.(recordValue);
+
+let callBack: EventListenerOrEventListenerObject | undefined = undefined;
+let callbackId: string | undefined = undefined;
+onMount(() => {
+  if (record.id && record.scope === 'DEFAULT') {
+    callbackId = record.id;
+    callBack = () => {
+      getInitialValue(record).then(v => {
+        if (v) {
+          recordValue = v;
+        }
+      });
+    };
+    onDidChangeConfiguration.addEventListener(record.id, callBack);
+  }
+});
+
+onDestroy(() => {
+  if (callBack && callbackId) {
+    onDidChangeConfiguration.removeEventListener(callbackId, callBack);
+  }
+});
 
 $: if (resetToDefault) {
   recordValue = record.type === 'number' ? getNormalizedDefaultNumberValue(record) : record.default;
@@ -86,7 +110,7 @@ function ensureType(value: any): boolean {
     case 'boolean':
       return record.type === 'boolean';
     case 'number':
-      return record.type === 'number';
+      return record.type === 'number' || record.type === 'integer';
     case 'string':
       return record.type === 'string';
     default:
@@ -126,8 +150,11 @@ async function onChange(recordId: string, value: boolean | string | number): Pro
     <ErrorMessage error="{invalidText}." icon={true} class="mr-2" />
   {/if}
   {#if record.type === 'boolean'}
-    <BooleanItem record={record} checked={!!recordValue} onChange={onChange} />
-  {:else if record.type === 'number'}
+    <BooleanItem
+      record={record}
+      checked={typeof givenValue === 'boolean' ? givenValue : !!recordValue}
+      onChange={onChange} />
+  {:else if record.type === 'number' || record.type === 'integer'}
     {#if enableSlider && typeof record.maximum === 'number'}
       <SliderItem
         record={record}
@@ -142,11 +169,17 @@ async function onChange(recordId: string, value: boolean | string | number): Pro
     {/if}
   {:else if record.type === 'string' && (typeof recordValue === 'string' || recordValue === undefined)}
     {#if record.format === 'file' || record.format === 'folder'}
-      <FileItem record={record} value={recordValue ?? ''} onChange={onChange} />
+      <FileItem
+        record={record}
+        value={typeof givenValue === 'string' ? givenValue : (recordValue ?? '')}
+        onChange={onChange} />
     {:else if record.enum && record.enum.length > 0}
-      <EnumItem record={record} value={recordValue} onChange={onChange} />
+      <EnumItem record={record} value={typeof givenValue === 'string' ? givenValue : recordValue} onChange={onChange} />
     {:else}
-      <StringItem record={record} value={recordValue} onChange={onChange} />
+      <StringItem
+        record={record}
+        value={typeof givenValue === 'string' ? givenValue : recordValue}
+        onChange={onChange} />
     {/if}
   {:else if record.type === 'markdown'}
     <div class="text-sm">

@@ -45,6 +45,7 @@ const catalogExtension1: CatalogExtension = {
   publisherDisplayName: 'Foo publisher display name',
   shortDescription: 'Foo extension short description',
   categories: ['Kubernetes'],
+  keywords: [],
   unlisted: false,
   versions: [
     {
@@ -65,6 +66,7 @@ const catalogExtension2: CatalogExtension = {
   publisherDisplayName: 'Foo publisher display name',
   shortDescription: 'Foo extension short description',
   categories: [],
+  keywords: [],
   unlisted: false,
   versions: [
     {
@@ -178,6 +180,10 @@ test('should check for updates if podman desktop version mistmatch and try to up
 
   // mock current version being 1.0.0
   vi.mocked(app.getVersion).mockReturnValue('1.0.0');
+
+  if (!catalogExtension1.versions[0]) {
+    throw new Error('No version');
+  }
 
   // change the catalog to include a podmanDesktopVersion minimum of 2.0.0 for the latest but ok for 1.5
   const catalogExtension1WithVersion: CatalogExtension = {

@@ -22,7 +22,7 @@ import { isAbsolute, join } from 'node:path';
 
 import * as extensionApi from '@podman-desktop/api';
 
-const macosExtraPath = '/usr/local/bin:/opt/homebrew/bin:/opt/local/bin:/opt/podman/bin';
+const macosExtraPath = '/opt/podman/bin:/usr/local/bin:/opt/homebrew/bin:/opt/local/bin';
 const localBinDir = '/usr/local/bin';
 
 export function getSystemBinaryPath(binaryName: string): string {
@@ -180,12 +180,10 @@ export async function getMemTotalInfo(socketPath: string): Promise<number> {
           } catch (e) {
             reject(e);
           }
+        } else if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string') {
+          reject(new Error(err.message));
         } else {
-          if (err && typeof err === 'object' && 'message' in err && typeof err.message === 'string') {
-            reject(new Error(err.message));
-          } else {
-            reject(new Error(String(err)));
-          }
+          reject(new Error(String(err)));
         }
       });
     });
@@ -194,4 +192,8 @@ export async function getMemTotalInfo(socketPath: string): Promise<number> {
       reject(new Error(err.message));
     });
   });
+}
+
+export function removeVersionPrefix(version: string): string {
+  return version.replace('v', '').trim();
 }

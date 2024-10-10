@@ -30,7 +30,7 @@ import {
   disconnectUI,
   eventCollect,
   reconnectUI,
-  startTask,
+  registerConnectionCallback,
 } from './preferences-connection-rendering-task';
 import PreferencesRenderingItemFormat from './PreferencesRenderingItemFormat.svelte';
 import { calcHalfCpuCores, getInitialValue, isPropertyValidInContext, writeToTerminal } from './Util';
@@ -43,7 +43,8 @@ export let callback: (
   data: any,
   handlerKey: symbol,
   collect: (key: symbol, eventName: 'log' | 'warn' | 'error' | 'finish', args: string[]) => void,
-  tokenId?: number,
+  tokenId: number | undefined,
+  taskId: number | undefined,
 ) => Promise<void>;
 export let taskId: number | undefined = undefined;
 export let disableEmptyScreen = false;
@@ -59,13 +60,6 @@ let operationFailed = false;
 export let pageIsLoading = true;
 let showLogs = false;
 let tokenId: number | undefined;
-
-const providerDisplayName =
-  (providerInfo.containerProviderConnectionCreation
-    ? (providerInfo.containerProviderConnectionCreationDisplayName ?? undefined)
-    : providerInfo.kubernetesProviderConnectionCreation
-      ? providerInfo.kubernetesProviderConnectionCreationDisplayName
-      : undefined) ?? providerInfo.name;
 
 let osMemory: string;
 let osCpu: string;
@@ -102,7 +96,10 @@ onMount(async () => {
   osMemory = await window.getOsMemory();
   osCpu = await window.getOsCpu();
   osFreeDisk = await window.getOsFreeDiskSize();
-  contextsUnsubscribe = context.subscribe(value => (globalContext = value));
+  contextsUnsubscribe = context.subscribe(value => {
+    globalContext = value;
+    loadConnectionParams().catch(() => console.error('unable to reload connection params'));
+  });
 
   // check if we have an existing action
   const operationConnectionInfoMap = get(operationConnectionsInfo);
@@ -125,6 +122,37 @@ onMount(async () => {
     }
   }
 
+  if (taskId === undefined) {
+    taskId = operationConnectionInfoMap.size + 1;
+  }
+
+  const data: any = {};
+  for (let field of configurationKeys) {
+    const id = field.id;
+    if (id) {
+      data[id] = field.default;
+    }
+  }
+  if (!connectionInfo) {
+    try {
+      connectionAuditResult = await window.auditConnectionParameters(providerInfo.internalId, data);
+    } catch (e: any) {
+      console.warn(e.message);
+    }
+  }
+  pageIsLoading = false;
+});
+
+onDestroy(() => {
+  if (loggerHandlerKey) {
+    disconnectUI(loggerHandlerKey);
+  }
+  if (contextsUnsubscribe) {
+    contextsUnsubscribe();
+  }
+});
+
+async function loadConnectionParams() {
   configurationKeys = properties
     .filter(property =>
       Array.isArray(property.scope) ? property.scope.find(s => s === propertyScope) : property.scope === propertyScope,
@@ -171,36 +199,7 @@ onMount(async () => {
   if (connectionInfo) {
     configurationKeys = configurationKeys.filter(property => !property.readonly);
   }
-
-  if (taskId === undefined) {
-    taskId = operationConnectionInfoMap.size + 1;
-  }
-
-  const data: any = {};
-  for (let field of configurationKeys) {
-    const id = field.id;
-    if (id) {
-      data[id] = field.default;
-    }
-  }
-  if (!connectionInfo) {
-    try {
-      connectionAuditResult = await window.auditConnectionParameters(providerInfo.internalId, data);
-    } catch (e: any) {
-      console.warn(e.message);
-    }
-  }
-  pageIsLoading = false;
-});
-
-onDestroy(() => {
-  if (loggerHandlerKey) {
-    disconnectUI(loggerHandlerKey);
-  }
-  if (contextsUnsubscribe) {
-    contextsUnsubscribe();
-  }
-});
+}
 
 function handleInvalidComponent() {
   isValid = false;
@@ -221,7 +220,9 @@ async function handleValidComponent() {
   }
 
   try {
-    connectionAuditResult = await window.auditConnectionParameters(providerInfo.internalId, data as AuditRequestItems);
+    const auditResult = await window.auditConnectionParameters(providerInfo.internalId, data as AuditRequestItems);
+    isValid = auditResult.records.filter(record => record.type === 'error').length === 0;
+    connectionAuditResult = auditResult;
   } catch (err: unknown) {
     if (err instanceof Error) {
       console.warn(err.message);
@@ -234,8 +235,13 @@ async function handleValidComponent() {
 function internalSetConfigurationValue(id: string, modified: boolean, value: string | boolean | number) {
   const item = configurationValues.get(id);
   if (item) {
-    item.modified = modified;
-    item.value = value;
+    // if the value has already been modified by the user and this is not an explicit user modification we do not update the value
+    // it may happen that the UI refreshes for some reason (like a value chosen in a dropdownlist) and we do not have to reset the
+    // values already entered (modified = true) by the user
+    if (modified || !item.modified) {
+      item.modified = modified;
+      item.value = value;
+    }
   } else {
     configurationValues.set(id, { modified, value });
   }
@@ -370,13 +376,9 @@ async function handleOnSubmit(e: any) {
     tokenId = await window.getCancellableTokenSource();
     // clear terminal
     logsTerminal?.clear();
-    loggerHandlerKey = startTask(
-      connectionInfo ? `Update ${providerDisplayName} ${connectionInfo.name}` : `Create ${providerDisplayName}`,
-      `/preferences/provider-task/${providerInfo.internalId}/${taskId}`,
-      getLoggerHandler(),
-    );
+    loggerHandlerKey = registerConnectionCallback(getLoggerHandler());
     updateStore();
-    await callback(providerInfo.internalId, data, loggerHandlerKey, eventCollect, tokenId);
+    await callback(providerInfo.internalId, data, loggerHandlerKey, eventCollect, tokenId, taskId);
   } catch (error: any) {
     //display error
     tokenId = undefined;
@@ -424,12 +426,23 @@ function closePage() {
 function getConnectionResourceConfigurationValue(
   configurationKey: IConfigurationPropertyRecordedSchema,
   configurationValues: Map<string, { modified: boolean; value: string | boolean | number }>,
-): number | undefined {
+): string | boolean | number | undefined {
   if (configurationKey.id && configurationValues.has(configurationKey.id)) {
     const value = configurationValues.get(configurationKey.id);
-    if (typeof value?.value === 'number') {
+    if (value?.value !== undefined) {
       return value.value;
     }
+  }
+  return undefined;
+}
+
+function getConnectionResourceConfigurationNumberValue(
+  configurationKey: IConfigurationPropertyRecordedSchema,
+  configurationValues: Map<string, { modified: boolean; value: string | boolean | number }>,
+): number | undefined {
+  const value = getConnectionResourceConfigurationValue(configurationKey, configurationValues);
+  if (typeof value === 'number') {
+    return value;
   }
   return undefined;
 }
@@ -510,7 +523,7 @@ function getConnectionResourceConfigurationValue(
                     <div class="text-gray-600">
                       <EditableConnectionResourceItem
                         record={configurationKey}
-                        value={getConnectionResourceConfigurationValue(configurationKey, configurationValues)}
+                        value={getConnectionResourceConfigurationNumberValue(configurationKey, configurationValues)}
                         onSave={setConfigurationValue} />
                     </div>
                   {/if}

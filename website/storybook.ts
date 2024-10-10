@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import { join } from 'node:path';
 
+import type { PropSidebarItem, PropSidebarItemCategory, PropSidebarItemLink } from '@docusaurus/plugin-content-docs';
 import type { LoadContext, Plugin, PluginOptions as DocusaurusOptions } from '@docusaurus/types';
 
 export interface PluginOptions extends DocusaurusOptions {
@@ -29,24 +30,113 @@ export interface PluginOptions extends DocusaurusOptions {
   storybookStatic: string;
 }
 
-function populate(folder: string, storybookStatic: string): void {
-  const index = require(join(storybookStatic, 'index.json'));
+export interface StorybookItem {
+  type: 'story' | 'docs';
+  id: string;
+  name: string;
+  title: string;
+  importPath: string;
+  tags: string[];
+}
 
-  if (index['v'] !== 5)
-    throw new Error(`index version is not compatible with current script. Expected 5 got ${index['v']}.`);
+export class StorybookSidebarBuilder {
+  private items: StorybookItem[] = [];
 
-  const items = [];
+  public fromStorybookIndex(index: unknown): StorybookSidebarBuilder {
+    if (!index || typeof index !== 'object') {
+      throw new Error('malformed storybook object');
+    }
 
-  for (const [key] of Object.entries(index['entries'])) {
-    items.push({
-      type: 'doc',
-      id: `${key}`,
-      label: `${key}`,
+    if (!('v' in index)) {
+      throw new Error('missing version in storybook index');
+    }
+
+    if (typeof index['v'] !== 'number' || index['v'] !== 5) {
+      throw new Error('invalid version number for storybook index');
+    }
+
+    if (!('entries' in index)) {
+      throw new Error('missing entries in storybook index');
+    }
+
+    Object.entries(index['entries']).forEach(([_, value]) => {
+      if (!('id' in value)) {
+        throw new Error('missing id in storybook entry');
+      }
+
+      if (!('title' in value)) {
+        throw new Error('missing title in storybook entry');
+      }
+
+      if (!('name' in value)) {
+        throw new Error('missing name in storybook entry');
+      }
+
+      this.items.push(value);
     });
+
+    return this;
   }
 
+  public build(): PropSidebarItemCategory[] {
+    const output: Map<string, PropSidebarItemCategory> = new Map();
+
+    for (const item of this.items) {
+      const keys: string[] = item.title.split('/');
+
+      let top: PropSidebarItemCategory;
+      if (output.has(keys[0])) {
+        top = output.get(keys[0]);
+      } else {
+        top = this.createCategory(keys[0]);
+        output.set(keys[0], top);
+      }
+
+      let current: PropSidebarItemCategory = top;
+      for (let i = 1; i < keys.length; i++) {
+        let category: PropSidebarItemCategory | undefined = current.items.find(
+          (item): item is PropSidebarItemCategory => item.type === 'category' && item.label === keys[i],
+        );
+
+        if (!category) {
+          category = this.createCategory(keys[i]);
+          current.items.push(category);
+        }
+
+        current = category;
+      }
+
+      current.items.push(this.createLink(item.name, item.id));
+    }
+
+    return Array.from(output.values());
+  }
+
+  private createCategory(label: string): PropSidebarItemCategory {
+    return {
+      type: 'category',
+      items: [],
+      collapsed: false,
+      collapsible: true,
+      label,
+    };
+  }
+
+  private createLink(label: string, id: string): PropSidebarItemLink {
+    return {
+      type: 'link',
+      label: label,
+      href: `/storybook?id=${id}`,
+    };
+  }
+}
+
+function populate(folder: string, storybookStatic: string): void {
+  const index = require(join(storybookStatic, 'index.json'));
+  const sidebar: PropSidebarItem[] = new StorybookSidebarBuilder().fromStorybookIndex(index).build();
+
   // Write the generate sidebar to the output directory
-  fs.writeFileSync(join(folder, 'sidebar.cjs'), `module.exports = ${JSON.stringify(items)};`);
+  fs.writeFileSync(join(folder, 'sidebar.cjs'), `module.exports = ${JSON.stringify(sidebar)};`);
 }
 
 function parseOptions(opts: unknown): PluginOptions {

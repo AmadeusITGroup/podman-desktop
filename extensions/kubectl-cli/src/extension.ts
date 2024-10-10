@@ -16,6 +16,7 @@
  * SPDX-License-Identifier: Apache-2.0
  ***********************************************************************/
 
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { Octokit } from '@octokit/rest';
@@ -225,11 +226,9 @@ export async function activate(extensionContext: extensionApi.ExtensionContext):
 
   // Push the CLI tool as well (but it will do it postActivation so it does not block the activate() function)
   // Post activation
-  setTimeout(() => {
-    postActivate(extensionContext, kubectlDownload).catch((error: unknown) => {
-      console.error('Error activating extension', error);
-    });
-  }, 0);
+  postActivate(extensionContext, kubectlDownload).catch((error: unknown) => {
+    console.error('Error activating extension', error);
+  });
 }
 
 interface CliFinder {
@@ -336,7 +335,50 @@ async function postActivate(
   let releaseToInstall: KubectlGithubReleaseArtifactMetadata | undefined;
   let releaseVersionToInstall: string | undefined;
   let currentVersion = kubectl.version;
+  // check if there is a new version to be installed and register the updater
+  let releaseToUpdateTo: KubectlGithubReleaseArtifactMetadata | undefined;
+  let releaseVersionToUpdateTo: string | undefined;
+  let latestAsset: KubectlGithubReleaseArtifactMetadata | undefined;
+  try {
+    latestAsset = await kubectlDownload.getLatestVersionAsset();
+  } catch (error: unknown) {
+    console.error('Error when downloading kubectl CLI latest release information.', String(error));
+  }
 
+  const update = {
+    version: latestAsset?.tag.slice(1) !== kubectlCliTool.version ? latestAsset?.tag.slice(1) : undefined,
+    selectVersion: async (): Promise<string> => {
+      const selected = await kubectlDownload.promptUserForVersion(currentVersion);
+      releaseToUpdateTo = selected;
+      releaseVersionToUpdateTo = selected.tag.slice(1);
+      return releaseVersionToUpdateTo;
+    },
+    doUpdate: async (): Promise<void> => {
+      if (!releaseToUpdateTo || !releaseVersionToUpdateTo) {
+        if (latestAsset) {
+          releaseToUpdateTo = latestAsset;
+          releaseVersionToUpdateTo = latestAsset.tag.slice(1);
+        } else {
+          throw new Error(`Cannot update ${path}. No release selected.`);
+        }
+      }
+      // download, install system wide and update cli version
+      const binaryPath = await kubectlDownload.download(releaseToUpdateTo);
+      await installBinaryToSystem(binaryPath, 'kubectl');
+      kubectlCliTool?.updateVersion({
+        version: releaseVersionToUpdateTo,
+        installationSource: 'extension',
+      });
+      currentVersion = releaseVersionToUpdateTo;
+      if (releaseToUpdateTo === latestAsset) {
+        delete update.version;
+      } else {
+        update.version = latestAsset?.tag.slice(1);
+      }
+      releaseVersionToUpdateTo = undefined;
+      releaseToUpdateTo = undefined;
+    },
+  };
   kubectlCliToolUpdaterDisposable = kubectlCliTool.registerInstaller({
     selectVersion: async () => {
       const selected = await kubectlDownload.promptUserForVersion(currentVersion);
@@ -362,6 +404,22 @@ async function postActivate(
       releaseVersionToInstall = undefined;
       releaseToInstall = undefined;
     },
+    doUninstall: async _logger => {
+      if (!currentVersion) {
+        throw new Error(`Cannot uninstall ${kubectlCliName}. No version detected.`);
+      }
+
+      // delete the executable stored in the storage folder
+      const storagePath = getStorageKubectlPath(extensionContext);
+      await deleteFile(storagePath);
+
+      // delete the executable in the system path
+      const systemPath = getSystemBinaryPath(kubectlCliName);
+      await deleteFile(systemPath);
+
+      // update the version to undefined
+      currentVersion = undefined;
+    },
   });
 
   extensionContext.subscriptions.push(kubectlCliToolUpdaterDisposable);
@@ -371,33 +429,7 @@ async function postActivate(
     return;
   }
 
-  // check if there is a new version to be installed and register the updater
-  let releaseToUpdateTo: KubectlGithubReleaseArtifactMetadata | undefined;
-  let releaseVersionToUpdateTo: string | undefined;
-
-  kubectlCliToolUpdaterDisposable = kubectlCliTool.registerUpdate({
-    selectVersion: async () => {
-      const selected = await kubectlDownload.promptUserForVersion(currentVersion);
-      releaseToUpdateTo = selected;
-      releaseVersionToUpdateTo = selected.tag.slice(1);
-      return releaseVersionToUpdateTo;
-    },
-    doUpdate: async _logger => {
-      if (!releaseToUpdateTo || !releaseVersionToUpdateTo) {
-        throw new Error(`Cannot update ${path}. No release selected.`);
-      }
-      // download, install system wide and update cli version
-      const binaryPath = await kubectlDownload.download(releaseToUpdateTo);
-      await installBinaryToSystem(binaryPath, 'kubectl');
-      kubectlCliTool?.updateVersion({
-        version: releaseVersionToUpdateTo,
-        installationSource: 'extension',
-      });
-      currentVersion = releaseVersionToUpdateTo;
-      releaseVersionToUpdateTo = undefined;
-      releaseToUpdateTo = undefined;
-    },
-  });
+  kubectlCliToolUpdaterDisposable = kubectlCliTool.registerUpdate(update);
 
   extensionContext.subscriptions.push(kubectlCliToolUpdaterDisposable);
 }
@@ -409,4 +441,38 @@ function extractVersion(stdout: string): string {
     return version;
   }
   throw new Error('Cannot extract version from stdout');
+}
+
+async function deleteFile(filePath: string): Promise<void> {
+  if (filePath && fs.existsSync(filePath)) {
+    try {
+      await fs.promises.unlink(filePath);
+    } catch (error: unknown) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        (error.code === 'EACCES' || error.code === 'EPERM')
+      ) {
+        await deleteFileAsAdmin(filePath);
+      } else {
+        throw error;
+      }
+    }
+  }
+}
+
+async function deleteFileAsAdmin(filePath: string): Promise<void> {
+  const system = process.platform;
+
+  const args: string[] = [filePath];
+  const command = system === 'win32' ? 'del' : 'rm';
+
+  try {
+    // Use admin prileges
+    await extensionApi.process.exec(command, args, { isAdmin: true });
+  } catch (error) {
+    console.error(`Failed to uninstall '${filePath}': ${error}`);
+    throw error;
+  }
 }

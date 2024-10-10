@@ -30,16 +30,24 @@ export class ResourceConnectionCardPage extends ResourceCardPage {
 
   constructor(page: Page, resourceName: string, resourceElementVisibleName?: string) {
     super(page, resourceName);
-    this.resourceElement = this.providerConnections.getByRole('region', { name: resourceElementVisibleName });
+    this.resourceElement = this.providerConnections.getByRole('region', {
+      name: resourceElementVisibleName,
+      exact: true,
+    });
     this.resourceElementDetailsButton = this.resourceElement.getByRole('button', { name: 'details' });
     this.resourceElementConnectionStatus = this.resourceElement.getByLabel('Connection Status Label');
     this.resourceElementConnectionActions = this.resourceElement.getByRole('group', { name: 'Connection Actions' });
     this.createButton = this.providerSetup.getByRole('button', { name: 'Create' });
   }
 
-  public async performConnectionAction(operation: ResourceElementActions): Promise<void> {
+  public async doesResourceElementExist(): Promise<boolean> {
+    return (await this.resourceElement.count()) > 0;
+  }
+
+  public async performConnectionAction(operation: ResourceElementActions, timeout: number = 25000): Promise<void> {
     const button = this.resourceElementConnectionActions.getByRole('button', { name: operation, exact: true });
-    await playExpect(button).toBeEnabled({ timeout: 10000 });
+    await playExpect(button).toBeEnabled({ timeout: timeout });
+    // eslint-disable-next-line sonarjs/no-base-to-string
     console.log(`Performing connection action '${operation}' on resource element '${this.resourceElement}'`);
     await button.click();
   }

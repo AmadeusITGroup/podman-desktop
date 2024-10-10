@@ -17,6 +17,7 @@
  ***********************************************************************/
 
 import type { Locator, Page } from '@playwright/test';
+import { expect as playExpect } from '@playwright/test';
 
 import { handleConfirmationDialog } from '../../utility/operations';
 import { MainPage } from './main-page';
@@ -53,6 +54,7 @@ export class PodsPage extends MainPage {
   }
 
   async openPlayKubeYaml(): Promise<PlayKubeYamlPage> {
+    await playExpect(this.playKubernetesYAMLButton).toBeEnabled();
     await this.playKubernetesYAMLButton.click();
     return new PlayKubeYamlPage(this.page);
   }
@@ -64,7 +66,7 @@ export class PodsPage extends MainPage {
   }
 
   async selectPod(names: string[]): Promise<void> {
-    for await (const containerName of names) {
+    for (const containerName of names) {
       const row = await this.getPodRowByName(containerName);
       if (row === undefined) {
         throw Error('Pod cannot be selected');
@@ -79,5 +81,14 @@ export class PodsPage extends MainPage {
       throw Error('Cannot select actions menu, pod does not exist');
     }
     return row.getByRole('button', { name: 'kebab menu', exact: true });
+  }
+
+  public async deployedPodExists(podName: string, environment: string = 'Podman'): Promise<boolean> {
+    const deployedContainerRow = await this.getPodRowByName(podName);
+    if (deployedContainerRow) {
+      const env = await deployedContainerRow.getByRole('cell').nth(4).textContent();
+      return env?.trim() === environment;
+    }
+    return false;
   }
 }

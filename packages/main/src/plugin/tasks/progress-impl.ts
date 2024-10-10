@@ -17,7 +17,10 @@
  ***********************************************************************/
 import type * as extensionApi from '@podman-desktop/api';
 
-import { findWindow } from '../../util.js';
+import { findWindow } from '/@/electron-util.js';
+import type { NavigationManager } from '/@/plugin/navigation/navigation-manager.js';
+import type { TaskAction } from '/@/plugin/tasks/tasks.js';
+
 import { CancellationTokenImpl } from '../cancellation-token.js';
 import type { TaskManager } from './task-manager.js';
 
@@ -34,7 +37,10 @@ export enum ProgressLocation {
 }
 
 export class ProgressImpl {
-  constructor(private taskManager: TaskManager) {}
+  constructor(
+    private taskManager: TaskManager,
+    private navigationManager: NavigationManager,
+  ) {}
 
   /**
    * Execute a task with progress, based on the provided options and task function.
@@ -58,7 +64,7 @@ export class ProgressImpl {
   }
 
   withApplicationIcon<R>(
-    options: extensionApi.ProgressOptions,
+    _options: extensionApi.ProgressOptions,
     task: (
       progress: extensionApi.Progress<{ message?: string; increment?: number }>,
       token: extensionApi.CancellationToken,
@@ -77,6 +83,23 @@ export class ProgressImpl {
     );
   }
 
+  protected getTaskAction(options: extensionApi.ProgressOptions): TaskAction | undefined {
+    if (!options.details) return undefined;
+
+    if (!this.navigationManager.hasRoute(options.details.routeId)) {
+      console.warn(`cannot created task action for unknown routeId ${options.details.routeId}`);
+      return undefined;
+    }
+
+    return {
+      name: 'View',
+      execute: (): unknown => {
+        if (!options.details) return;
+        return this.navigationManager.navigateToRoute(options.details.routeId, ...options.details.routeArgs);
+      },
+    };
+  }
+
   async withWidget<R>(
     options: extensionApi.ProgressOptions,
     task: (
@@ -84,7 +107,10 @@ export class ProgressImpl {
       token: extensionApi.CancellationToken,
     ) => Promise<R>,
   ): Promise<R> {
-    const t = this.taskManager.createTask(options.title);
+    const t = this.taskManager.createTask({
+      title: options.title,
+      action: this.getTaskAction(options),
+    });
 
     return task(
       {
@@ -95,7 +121,6 @@ export class ProgressImpl {
           if (value.increment) {
             t.progress = value.increment;
           }
-          this.taskManager.updateTask(t);
         },
       },
       new CancellationTokenImpl(),
@@ -103,21 +128,14 @@ export class ProgressImpl {
       .then(value => {
         // Middleware to capture the success of the task
         t.status = 'success';
-        t.state = 'completed';
         // We propagate the result to the caller, so he can use the result
         return value;
       })
       .catch((err: unknown) => {
         // Middleware to set to error the task
-        t.status = 'failure';
-        t.state = 'completed';
         t.error = String(err);
         // We propagate the error to the caller, so it can handle it if needed
         throw err;
-      })
-      .finally(() => {
-        // Ensure the taskManager is updated properly is every case
-        this.taskManager.updateTask(t);
       });
   }
 }

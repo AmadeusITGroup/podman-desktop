@@ -1,11 +1,13 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
+import { Tooltip } from '@podman-desktop/ui-svelte';
 import { onMount } from 'svelte';
 import type { TinroRouteMeta } from 'tinro';
 
 import { NavigationPage } from '/@api/navigation-page';
 
+import AuthActions from './lib/authentication/AuthActions.svelte';
 import { CommandRegistry } from './lib/CommandRegistry';
 import NewContentOnDashboardBadge from './lib/dashboard/NewContentOnDashboardBadge.svelte';
 import AccountIcon from './lib/images/AccountIcon.svelte';
@@ -13,11 +15,13 @@ import DashboardIcon from './lib/images/DashboardIcon.svelte';
 import SettingsIcon from './lib/images/SettingsIcon.svelte';
 import NavItem from './lib/ui/NavItem.svelte';
 import NavRegistryEntry from './lib/ui/NavRegistryEntry.svelte';
-import NavSection from './lib/ui/NavSection.svelte';
 import { handleNavigation } from './navigation';
 import { navigationRegistry } from './stores/navigation/navigation-registry';
 
 let { exitSettingsCallback, meta = $bindable() }: { exitSettingsCallback: () => void; meta: TinroRouteMeta } = $props();
+
+let authActions = $state<AuthActions>();
+let outsideWindow = $state<HTMLDivElement>();
 
 const iconSize = '22';
 
@@ -26,8 +30,8 @@ onMount(async () => {
   commandRegistry.init();
 });
 
-function clickSettings(b: boolean) {
-  if (b) {
+function handleClick(): void {
+  if (meta.url.startsWith('/preferences')) {
     exitSettingsCallback();
   } else {
     handleNavigation({ page: NavigationPage.RESOURCES });
@@ -48,46 +52,28 @@ function clickSettings(b: boolean) {
     </div>
   </NavItem>
   {#each $navigationRegistry as navigationRegistryItem}
-    <!-- This is a section -->
-    {#if navigationRegistryItem.type === 'section' && navigationRegistryItem.enabled}
-      {@const allItemsHidden = (navigationRegistryItem.items ?? []).every(item => item.hidden)}
-      {#if !allItemsHidden}
-        <NavSection tooltip={navigationRegistryItem.name}>
-          <!-- svelte-ignore svelte_component_deprecated -->
-          <svelte:component this={navigationRegistryItem.icon.iconComponent} size={iconSize} slot="icon" />
-
-          {#if navigationRegistryItem.items}
-            {#each navigationRegistryItem.items as item}
-              <NavRegistryEntry entry={item} bind:meta={meta} />
-            {/each}
-          {/if}
-        </NavSection>
-      {/if}
-    {:else if navigationRegistryItem.items && navigationRegistryItem.type === 'group'}
+    {#if navigationRegistryItem.items && navigationRegistryItem.type === 'group'}
       <!-- This is a group, list all items from the entry -->
       {#each navigationRegistryItem.items as item}
         <NavRegistryEntry entry={item} bind:meta={meta} />
       {/each}
-    {:else if navigationRegistryItem.type === 'entry'}
+    {:else if navigationRegistryItem.type === 'entry' || navigationRegistryItem.type === 'submenu'}
       <NavRegistryEntry entry={navigationRegistryItem} bind:meta={meta} />
     {/if}
   {/each}
 
   <div class="grow"></div>
 
-  <NavItem
-    href="/accounts"
-    tooltip="Accounts"
-    bind:meta={meta}
-    onClick={event => window.showAccountsMenu(event.x, event.y)}>
-    <AccountIcon size={iconSize} />
-  </NavItem>
+  <div bind:this={outsideWindow}>
+    <NavItem href="/accounts" tooltip="" bind:meta={meta} onClick={event => authActions?.onButtonClick(event)}>
+      <Tooltip bottomRight tip="Accounts">
+        <AccountIcon size={iconSize} />
+      </Tooltip>
+      <AuthActions bind:this={authActions} outsideWindow={outsideWindow} />
+    </NavItem>
+  </div>
 
-  <NavItem
-    href="/preferences"
-    tooltip="Settings"
-    bind:meta={meta}
-    onClick={() => clickSettings(meta.url.startsWith('/preferences'))}>
+  <NavItem href="/preferences" tooltip="Settings" bind:meta={meta} onClick={handleClick}>
     <SettingsIcon size={iconSize} />
   </NavItem>
 </nav>

@@ -42,7 +42,7 @@ import type * as containerDesktopAPI from '@podman-desktop/api';
 import checkDiskSpacePkg from 'check-disk-space';
 import type Dockerode from 'dockerode';
 import type { WebContents } from 'electron';
-import { app, BrowserWindow, clipboard, ipcMain, nativeTheme, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, shell } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron/main';
 
 import type { KubernetesGeneratorInfo } from '/@/plugin/api/KubernetesGeneratorInfo.js';
@@ -50,13 +50,14 @@ import type {
   GenerateKubeResult,
   KubernetesGeneratorArgument,
   KubernetesGeneratorSelector,
-} from '/@/plugin/kube-generator-registry.js';
-import { KubeGeneratorRegistry } from '/@/plugin/kube-generator-registry.js';
+} from '/@/plugin/kubernetes/kube-generator-registry.js';
+import { KubeGeneratorRegistry } from '/@/plugin/kubernetes/kube-generator-registry.js';
 import type { Menu } from '/@/plugin/menu-registry.js';
 import { MenuRegistry } from '/@/plugin/menu-registry.js';
 import { NavigationManager } from '/@/plugin/navigation/navigation-manager.js';
 import type { ExtensionBanner, RecommendedRegistry } from '/@/plugin/recommendations/recommendations-api.js';
 import { TaskManager } from '/@/plugin/tasks/task-manager.js';
+import { Uri } from '/@/plugin/types/uri.js';
 import { Updater } from '/@/plugin/updater.js';
 import type { CliToolInfo } from '/@api/cli-tool-info.js';
 import type { ColorInfo } from '/@api/color-info.js';
@@ -75,6 +76,7 @@ import type {
 import type { ContainerInspectInfo } from '/@api/container-inspect-info.js';
 import type { ContainerStatsInfo } from '/@api/container-stats-info.js';
 import type { ContributionInfo } from '/@api/contribution-info.js';
+import type { DockerContextInfo, DockerSocketMappingStatusInfo } from '/@api/docker-compatibility-info.js';
 import type { ExtensionInfo } from '/@api/extension-info.js';
 import type { HistoryInfo } from '/@api/history-info.js';
 import type { IconInfo } from '/@api/icon-info.js';
@@ -84,6 +86,7 @@ import type { ImageInfo } from '/@api/image-info.js';
 import type { ImageInspectInfo } from '/@api/image-inspect-info.js';
 import type { ImageSearchOptions, ImageSearchResult, ImageTagsListOptions } from '/@api/image-registry.js';
 import type { KubeContext } from '/@api/kubernetes-context.js';
+import type { ContextGeneralState, ResourceName } from '/@api/kubernetes-contexts-states.js';
 import type { ManifestCreateOptions, ManifestInspectInfo, ManifestPushOptions } from '/@api/manifest-info.js';
 import type { NetworkInspectInfo } from '/@api/network-info.js';
 import type { NotificationCard, NotificationCardOptions } from '/@api/notification.js';
@@ -96,7 +99,9 @@ import type {
   ProviderInfo,
   ProviderKubernetesConnectionInfo,
 } from '/@api/provider-info.js';
+import type { ProxyState } from '/@api/proxy.js';
 import type { PullEvent } from '/@api/pull-event.js';
+import type { ReleaseNotesInfo } from '/@api/release-notes-info.js';
 import type { ViewInfoUI } from '/@api/view-info.js';
 import type { VolumeInspectInfo, VolumeListInfo } from '/@api/volume-info.js';
 import type { WebviewInfo } from '/@api/webview-info.js';
@@ -109,7 +114,6 @@ import type { PodInfo, PodInspectInfo } from './api/pod-info.js';
 import { AppearanceInit } from './appearance-init.js';
 import type { AuthenticationProviderInfo } from './authentication.js';
 import { AuthenticationImpl } from './authentication.js';
-import { showAccountsMenu } from './authentication-menu.js';
 import { AutostartEngine } from './autostart-engine.js';
 import { CancellationTokenRegistry } from './cancellation-token-registry.js';
 import { Certificates } from './certificates.js';
@@ -126,6 +130,7 @@ import { ContributionManager } from './contribution-manager.js';
 import { CustomPickRegistry } from './custompick/custompick-registry.js';
 import { DialogRegistry } from './dialog-registry.js';
 import { Directories } from './directories.js';
+import { DockerCompatibility } from './docker/docker-compatibility.js';
 import { DockerDesktopInstallation } from './docker-extension/docker-desktop-installation.js';
 import { DockerPluginAdapter } from './docker-extension/docker-plugin-adapter.js';
 import type {
@@ -147,8 +152,7 @@ import { ImageFilesRegistry } from './image-files-registry.js';
 import { ImageRegistry } from './image-registry.js';
 import { InputQuickPickRegistry } from './input-quickpick/input-quickpick-registry.js';
 import { ExtensionInstaller } from './install/extension-installer.js';
-import { KubernetesClient } from './kubernetes-client.js';
-import type { ContextGeneralState, ResourceName } from './kubernetes-context-state.js';
+import { KubernetesClient } from './kubernetes/kubernetes-client.js';
 import { downloadGuideList } from './learning-center/learning-center.js';
 import { LibpodApiInit } from './libpod-api-enable/libpod-api-init.js';
 import type { MessageBoxOptions, MessageBoxReturnValue } from './message-box.js';
@@ -159,6 +163,7 @@ import { OpenDevToolsInit } from './open-devtools-init.js';
 import { ProviderRegistry } from './provider-registry.js';
 import { Proxy } from './proxy.js';
 import { RecommendationsRegistry } from './recommendations/recommendations-registry.js';
+import { ReleaseNotesBannerInit } from './release-notes-banner-init.js';
 import { SafeStorageRegistry } from './safe-storage/safe-storage-registry.js';
 import type { StatusBarEntryDescriptor } from './statusbar/statusbar-registry.js';
 import { StatusBarRegistry } from './statusbar/statusbar-registry.js';
@@ -284,6 +289,7 @@ export class PluginSystem {
 
       if (toAppend !== '') return `[${toAppend}]`;
     }
+    return undefined;
   }
 
   // log locally and also send it to the renderer process
@@ -455,10 +461,12 @@ export class PluginSystem {
     const colorRegistry = new ColorRegistry(apiSender, configurationRegistry);
     colorRegistry.init();
 
-    const proxy = new Proxy(configurationRegistry);
+    const certificates = new Certificates();
+    await certificates.init();
+    const proxy = new Proxy(configurationRegistry, certificates);
     await proxy.init();
 
-    const telemetry = new Telemetry(configurationRegistry, proxy);
+    const telemetry = new Telemetry(configurationRegistry);
     await telemetry.init();
 
     const exec = new Exec(proxy);
@@ -470,8 +478,6 @@ export class PluginSystem {
     const notificationRegistry = new NotificationRegistry(apiSender, taskManager);
     const menuRegistry = new MenuRegistry(commandRegistry);
     const kubeGeneratorRegistry = new KubeGeneratorRegistry();
-    const certificates = new Certificates();
-    await certificates.init();
     const imageRegistry = new ImageRegistry(apiSender, telemetry, certificates, proxy);
     const viewRegistry = new ViewRegistry();
     const context = new Context(apiSender);
@@ -487,17 +493,20 @@ export class PluginSystem {
     const inputQuickPickRegistry = new InputQuickPickRegistry(apiSender);
     const fileSystemMonitoring = new FilesystemMonitoring();
     const customPickRegistry = new CustomPickRegistry(apiSender);
-    const onboardingRegistry = new OnboardingRegistry(configurationRegistry, context);
+    const onboardingRegistry = new OnboardingRegistry(context);
     const kubernetesClient = new KubernetesClient(apiSender, configurationRegistry, fileSystemMonitoring, telemetry);
     await kubernetesClient.init();
     const closeBehaviorConfiguration = new CloseBehavior(configurationRegistry);
     await closeBehaviorConfiguration.init();
 
+    const dockerCompatibility = new DockerCompatibility(configurationRegistry, providerRegistry);
+    dockerCompatibility.init();
+
     const messageBox = new MessageBox(apiSender);
 
     // Don't show the tray icon options on Mac
     if (!isMac()) {
-      const trayIconColor = new TrayIconColor(configurationRegistry, providerRegistry);
+      const trayIconColor = new TrayIconColor(configurationRegistry);
       await trayIconColor.init();
     }
 
@@ -563,7 +572,15 @@ export class PluginSystem {
     );
 
     // Init update logic
-    new Updater(messageBox, configurationRegistry, statusBarRegistry, commandRegistry, taskManager).init();
+    const podmanDesktopUpdater = new Updater(
+      messageBox,
+      configurationRegistry,
+      statusBarRegistry,
+      commandRegistry,
+      taskManager,
+      apiSender,
+    );
+    podmanDesktopUpdater.init();
 
     commandRegistry.registerCommand('feedback', () => {
       apiSender.send('display-feedback', '');
@@ -583,6 +600,9 @@ export class PluginSystem {
 
     const confirmationConfiguration = new ConfirmationInit(configurationRegistry);
     confirmationConfiguration.init();
+
+    const releaseNotesBannerConfiguration = new ReleaseNotesBannerInit(configurationRegistry);
+    releaseNotesBannerConfiguration.init();
 
     const terminalInit = new TerminalInit(configurationRegistry);
     terminalInit.init();
@@ -610,13 +630,13 @@ export class PluginSystem {
 
     const authentication = new AuthenticationImpl(apiSender, messageBox);
 
-    const cliToolRegistry = new CliToolRegistry(apiSender, exec);
+    const cliToolRegistry = new CliToolRegistry(apiSender);
 
     const imageChecker = new ImageCheckerImpl(apiSender);
 
-    const imageFiles = new ImageFilesRegistry(apiSender);
+    const imageFiles = new ImageFilesRegistry(apiSender, configurationRegistry, context);
 
-    const troubleshooting = new Troubleshooting(apiSender);
+    const troubleshooting = new Troubleshooting();
 
     const contributionManager = new ContributionManager(apiSender, directories, containerProviderRegistry, exec);
 
@@ -632,6 +652,7 @@ export class PluginSystem {
       contributionManager,
       providerRegistry,
       webviewRegistry,
+      commandRegistry,
     );
 
     this.extensionLoader = new ExtensionLoader(
@@ -643,7 +664,7 @@ export class PluginSystem {
       apiSender,
       trayMenuRegistry,
       messageBox,
-      new ProgressImpl(taskManager),
+      new ProgressImpl(taskManager, navigationManager),
       statusBarRegistry,
       kubernetesClient,
       fileSystemMonitoring,
@@ -669,6 +690,7 @@ export class PluginSystem {
       colorRegistry,
       dialogRegistry,
       safeStorageRegistry,
+      certificates,
     );
     await this.extensionLoader.init();
 
@@ -691,6 +713,18 @@ export class PluginSystem {
 
     // setup security restrictions on links
     await this.setupSecurityRestrictionsOnLinks(messageBox);
+
+    this.ipcHandle('tasks:clear-all', async (): Promise<void> => {
+      return taskManager.clearTasks();
+    });
+
+    this.ipcHandle('tasks:clear', async (_listener, taskId: string): Promise<void> => {
+      return taskManager.getTask(taskId).dispose();
+    });
+
+    this.ipcHandle('tasks:execute', async (_listener, taskId: string): Promise<void> => {
+      return taskManager.execute(taskId);
+    });
 
     this.ipcHandle('container-provider-registry:listContainers', async (): Promise<ContainerInfo[]> => {
       return containerProviderRegistry.listContainers();
@@ -1022,6 +1056,16 @@ export class PluginSystem {
     );
 
     this.ipcHandle(
+      'container-provider-registry:resolveShortnameImage',
+      async (
+        _listener,
+        providerContainerConnectionInfo: ProviderContainerConnectionInfo,
+        shortName: string,
+      ): Promise<string[]> => {
+        return containerProviderRegistry.resolveShortnameImage(providerContainerConnectionInfo, shortName);
+      },
+    );
+    this.ipcHandle(
       'container-provider-registry:pullImage',
       async (
         _listener,
@@ -1149,57 +1193,143 @@ export class PluginSystem {
         cancellableTokenId?: number,
         buildargs?: { [key: string]: string },
       ): Promise<unknown> => {
+        // create task
+        const task = taskManager.createTask({
+          title: `Build ${imageName}`,
+          action: {
+            name: 'Go to task >',
+            execute: () => {
+              navigationManager.navigateToImageBuild().catch((err: unknown) => {
+                console.error(`Something went wrong while trying to navigate to image build: ${String(err)}`);
+              });
+            },
+          },
+        });
+
         const abortController = this.createAbortControllerOnCancellationToken(
           cancellationTokenRegistry,
           cancellableTokenId,
         );
-        return containerProviderRegistry.buildImage(
-          containerBuildContextDirectory,
-          (eventName: string, data: string) => {
-            this.getWebContentsSender().send(
-              'container-provider-registry:buildImage-onData',
-              onDataCallbacksBuildImageId,
-              eventName,
-              data,
-            );
-          },
-          {
-            containerFile: relativeContainerfilePath,
-            tag: imageName,
-            platform,
-            provider: selectedProvider,
-            abortController,
-            buildargs,
-          },
-        );
+        return containerProviderRegistry
+          .buildImage(
+            containerBuildContextDirectory,
+            (eventName: string, data: string) => {
+              this.getWebContentsSender().send(
+                'container-provider-registry:buildImage-onData',
+                onDataCallbacksBuildImageId,
+                eventName,
+                data,
+              );
+            },
+            {
+              containerFile: relativeContainerfilePath,
+              tag: imageName,
+              platform,
+              provider: selectedProvider,
+              abortController,
+              buildargs,
+            },
+          )
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((err: unknown) => {
+            task.error = `Something went wrong while trying to build image: ${String(err)}`;
+            throw err;
+          });
       },
     );
 
     this.ipcHandle(
       'container-provider-registry:exportContainer',
       async (_listener, engine: string, options: ContainerExportOptions): Promise<void> => {
-        return containerProviderRegistry.exportContainer(engine, options);
+        // create task
+        const task = taskManager.createTask({
+          title: 'Export container',
+          action: {
+            name: 'Open folder',
+            execute: (): void => {
+              dialogRegistry.openDialog({ defaultUri: Uri.file(options.outputTarget) }).catch((error: unknown) => {
+                console.error('Error opening dialog', error);
+              });
+            },
+          },
+        });
+        // wrap the logic to handle potential error
+        return containerProviderRegistry
+          .exportContainer(engine, options)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((err: unknown) => {
+            task.error = `Something went wrong while trying to export container: ${String(err)}`;
+            throw err;
+          });
       },
     );
 
     this.ipcHandle(
       'container-provider-registry:importContainer',
       async (_listener, options: ContainerImportOptions): Promise<void> => {
-        return containerProviderRegistry.importContainer(options);
+        // create task
+        const task = taskManager.createTask({
+          title: 'Import container',
+        });
+        // wrap the logic to handle potential error
+        return containerProviderRegistry
+          .importContainer(options)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((err: unknown) => {
+            task.error = `Something went wrong while trying to import container: ${String(err)}`;
+            throw err;
+          });
       },
     );
 
     this.ipcHandle(
       'container-provider-registry:saveImages',
       async (_listener, options: ImagesSaveOptions): Promise<void> => {
-        return containerProviderRegistry.saveImages(options);
+        // create task
+        const task = taskManager.createTask({
+          title: 'Save images',
+        });
+        // wrap the logic to handle potential error
+        return containerProviderRegistry
+          .saveImages(options)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((err: unknown) => {
+            task.error = `Something went wrong while trying to save images: ${String(err)}`;
+            throw err;
+          });
       },
     );
 
     this.ipcHandle(
       'container-provider-registry:loadImages',
       async (_listener, options: ImageLoadOptions): Promise<void> => {
-        return containerProviderRegistry.loadImages(options);
+        // create task
+        const task = taskManager.createTask({
+          title: 'Load images',
+        });
+        // wrap the logic to handle potential error
+        return containerProviderRegistry
+          .loadImages(options)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((err: unknown) => {
+            task.error = `Something went wrong while trying to load images: ${String(err)}`;
+            throw err;
+          });
       },
     );
 
@@ -1218,6 +1348,18 @@ export class PluginSystem {
         await commandRegistry.executeCommand(command, args);
       },
     );
+
+    this.ipcHandle('app:update', async (): Promise<void> => {
+      await commandRegistry.executeCommand('update');
+    });
+
+    this.ipcHandle('app:update-available', async (): Promise<boolean> => {
+      return podmanDesktopUpdater.updateAvailable();
+    });
+
+    this.ipcHandle('app:get-release-notes', async (): Promise<ReleaseNotesInfo> => {
+      return podmanDesktopUpdater.getReleaseNotes();
+    });
 
     this.ipcHandle('provider-registry:getProviderInfos', async (): Promise<ProviderInfo[]> => {
       return providerRegistry.getProviderInfos();
@@ -1263,16 +1405,36 @@ export class PluginSystem {
 
     this.ipcHandle(
       'cli-tool-registry:updateCliTool',
-      async (_listener, id: string, loggerId: string): Promise<void> => {
+      async (_listener, id: string, version: string, loggerId: string): Promise<void> => {
         const logger = this.getLogHandler('provider-registry:updateCliTool-onData', loggerId);
-        try {
-          await cliToolRegistry.updateCliTool(id, logger);
-        } catch (error) {
-          logger.error(error);
-          throw error;
-        } finally {
-          logger.onEnd();
-        }
+        const tool = cliToolRegistry.getCliToolInfos().find(tool => tool.id === id);
+        if (!tool) throw new Error(`cannot find cli tool with id ${id}`);
+
+        // create task
+        const task = taskManager.createTask({
+          title: `Update ${tool.name} to v${version}`,
+          action: {
+            name: 'goto task >',
+            execute: (): void => {
+              navigationManager.navigateToCliTools().catch((err: unknown) => console.error(err));
+            },
+          },
+        });
+
+        return cliToolRegistry
+          .updateCliTool(id, logger)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((error: unknown) => {
+            task.error = `Something went wrong while trying to update ${tool.name}: ${error}`;
+            logger.error(error);
+            throw error;
+          })
+          .finally(() => {
+            logger.onEnd();
+          });
       },
     );
 
@@ -1285,16 +1447,71 @@ export class PluginSystem {
 
     this.ipcHandle(
       'cli-tool-registry:installCliTool',
+      async (_listener, id: string, versionToInstall: string, loggerId: string): Promise<void> => {
+        const logger = this.getLogHandler('provider-registry:installCliTool-onData', loggerId);
+        const tool = cliToolRegistry.getCliToolInfos().find(tool => tool.id === id);
+        if (!tool) throw new Error(`cannot find cli tool with id ${id}`);
+
+        // create task
+        const task = taskManager.createTask({
+          title: `Install ${tool.name} to v${versionToInstall}`,
+          action: {
+            name: 'goto task >',
+            execute: (): void => {
+              navigationManager.navigateToCliTools().catch((err: unknown) => console.error(err));
+            },
+          },
+        });
+
+        return cliToolRegistry
+          .installCliTool(id, logger)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((error: unknown) => {
+            task.error = `Something went wrong while trying to install ${tool.name}: ${error}`;
+            logger.error(error);
+            throw error;
+          })
+          .finally(() => {
+            logger.onEnd();
+          });
+      },
+    );
+
+    this.ipcHandle(
+      'cli-tool-registry:uninstallCliTool',
       async (_listener, id: string, loggerId: string): Promise<void> => {
         const logger = this.getLogHandler('provider-registry:installCliTool-onData', loggerId);
-        try {
-          await cliToolRegistry.installCliTool(id, logger);
-        } catch (error) {
-          logger.error(error);
-          throw error;
-        } finally {
-          logger.onEnd();
-        }
+        const tool = cliToolRegistry.getCliToolInfos().find(tool => tool.id === id);
+        if (!tool) throw new Error(`cannot find cli tool with id ${id}`);
+
+        // create task
+        const task = taskManager.createTask({
+          title: `Uninstall ${tool.name} v${tool.version}`,
+          action: {
+            name: 'goto task >',
+            execute: (): void => {
+              navigationManager.navigateToCliTools().catch((err: unknown) => console.error(err));
+            },
+          },
+        });
+
+        return cliToolRegistry
+          .uninstallCliTool(id, logger)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((error: unknown) => {
+            task.error = `Something went wrong while trying to uninstall ${tool.name}: ${error}`;
+            logger.error(error);
+            throw error;
+          })
+          .finally(() => {
+            logger.onEnd();
+          });
       },
     );
 
@@ -1462,9 +1679,12 @@ export class PluginSystem {
       },
     );
 
-    this.ipcHandle('showQuickPick:values', async (_listener, id: number, indexes: number[]): Promise<void> => {
-      return inputQuickPickRegistry.onQuickPickValuesSelected(id, indexes);
-    });
+    this.ipcHandle(
+      'showQuickPick:values',
+      async (_listener, id: number, indexes: number[] | undefined): Promise<void> => {
+        return inputQuickPickRegistry.onQuickPickValuesSelected(id, indexes);
+      },
+    );
 
     this.ipcHandle(
       'showInputBox:validate',
@@ -1600,10 +1820,6 @@ export class PluginSystem {
       },
     );
 
-    this.ipcHandle('authentication:showAccountsMenu', async (_listener, x: number, y: number): Promise<void> => {
-      return showAccountsMenu(x, y, authentication, navigationManager);
-    });
-
     this.ipcHandle(
       'configuration-registry:getConfigurationProperties',
       async (): Promise<Record<string, IConfigurationPropertyRecordedSchema>> => {
@@ -1724,10 +1940,6 @@ export class PluginSystem {
       return os.cpus().length;
     });
 
-    this.ipcHandle('native:theme', async (_listener, themeSource: 'system' | 'light' | 'dark'): Promise<void> => {
-      nativeTheme.themeSource = themeSource;
-    });
-
     this.ipcHandle(
       'provider-registry:startProviderLifecycle',
       async (_listener: Electron.IpcMainInvokeEvent, providerId: string): Promise<void> => {
@@ -1752,16 +1964,19 @@ export class PluginSystem {
       },
     );
 
-    this.ipcHandle('proxy:setState', async (_listener: Electron.IpcMainInvokeEvent, state: boolean): Promise<void> => {
-      return proxy.setState(state);
-    });
+    this.ipcHandle(
+      'proxy:setState',
+      async (_listener: Electron.IpcMainInvokeEvent, state: ProxyState): Promise<void> => {
+        return proxy.setState(state);
+      },
+    );
 
     this.ipcHandle('proxy:getSettings', async (): Promise<containerDesktopAPI.ProxySettings | undefined> => {
       return proxy.proxy;
     });
 
-    this.ipcHandle('proxy:isEnabled', async (): Promise<boolean> => {
-      return proxy.isEnabled();
+    this.ipcHandle('proxy:getState', async (): Promise<ProxyState> => {
+      return proxy.getState();
     });
 
     this.ipcHandle(
@@ -1772,9 +1987,31 @@ export class PluginSystem {
         providerConnectionInfo: ProviderContainerConnectionInfo | ProviderKubernetesConnectionInfo,
         loggerId: string,
       ): Promise<void> => {
+        const task = taskManager.createTask({
+          title: `Start ${providerConnectionInfo.name}`,
+          action: {
+            name: 'Go to task >',
+            execute: () => {
+              navigationManager.navigateToResources().catch((err: unknown) => console.error(err));
+            },
+          },
+        });
+
         const logger = this.getLogHandler('provider-registry:taskConnection-onData', loggerId);
-        await providerRegistry.startProviderConnection(providerId, providerConnectionInfo, logger);
-        logger.onEnd();
+        return providerRegistry
+          .startProviderConnection(providerId, providerConnectionInfo, logger)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((err: unknown) => {
+            task.error = `Something went wrong while starting container provider: ${err}`;
+            logger.error(err);
+            throw err;
+          })
+          .finally(() => {
+            logger.onEnd();
+          });
       },
     );
 
@@ -1786,9 +2023,31 @@ export class PluginSystem {
         providerConnectionInfo: ProviderContainerConnectionInfo | ProviderKubernetesConnectionInfo,
         loggerId: string,
       ): Promise<void> => {
+        const task = taskManager.createTask({
+          title: `Stop ${providerConnectionInfo.name}`,
+          action: {
+            name: 'Go to task >',
+            execute: () => {
+              navigationManager.navigateToResources().catch((err: unknown) => console.error(err));
+            },
+          },
+        });
+
         const logger = this.getLogHandler('provider-registry:taskConnection-onData', loggerId);
-        await providerRegistry.stopProviderConnection(providerId, providerConnectionInfo, logger);
-        logger.onEnd();
+        await providerRegistry
+          .stopProviderConnection(providerId, providerConnectionInfo, logger)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((err: unknown) => {
+            task.error = `Something went wrong while stopping container provider: ${err}`;
+            logger.error(err);
+            throw err;
+          })
+          .finally(() => {
+            logger.onEnd();
+          });
       },
     );
 
@@ -1801,7 +2060,8 @@ export class PluginSystem {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         params: { [key: string]: any },
         loggerId: string,
-        tokenId?: number,
+        tokenId: number | undefined,
+        taskId: number | undefined,
       ): Promise<void> => {
         const logger = this.getLogHandler('provider-registry:taskConnection-onData', loggerId);
         let token;
@@ -1809,8 +2069,31 @@ export class PluginSystem {
           const tokenSource = cancellationTokenRegistry.getCancellationTokenSource(tokenId);
           token = tokenSource?.token;
         }
-        await providerRegistry.editProviderConnection(providerId, providerConnectionInfo, params, logger, token);
-        logger.onEnd();
+
+        const task = taskManager.createTask({
+          title: `Create Container provider`,
+          action: {
+            name: 'Open task',
+            execute: () => {
+              navigationManager.navigateToProviderTask(providerId, taskId).catch((err: unknown) => console.error(err));
+            },
+          },
+        });
+
+        return providerRegistry
+          .editProviderConnection(providerId, providerConnectionInfo, params, logger, token)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((err: unknown) => {
+            task.error = `Something went wrong while creating container provider: ${err}`;
+            logger.error(err);
+            throw err;
+          })
+          .finally(() => {
+            logger.onEnd();
+          });
       },
     );
 
@@ -1822,9 +2105,31 @@ export class PluginSystem {
         providerConnectionInfo: ProviderContainerConnectionInfo | ProviderKubernetesConnectionInfo,
         loggerId: string,
       ): Promise<void> => {
+        const task = taskManager.createTask({
+          title: `Delete ${providerConnectionInfo.name}`,
+          action: {
+            name: 'Go to resources',
+            execute: () => {
+              navigationManager.navigateToResources().catch((err: unknown) => console.error(err));
+            },
+          },
+        });
+
         const logger = this.getLogHandler('provider-registry:taskConnection-onData', loggerId);
-        await providerRegistry.deleteProviderConnection(providerId, providerConnectionInfo, logger);
-        logger.onEnd();
+        return providerRegistry
+          .deleteProviderConnection(providerId, providerConnectionInfo, logger)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((err: unknown) => {
+            task.error = `Something went wrong while trying to delete ${providerConnectionInfo.name}`;
+            logger.error(err);
+            throw err;
+          })
+          .finally(() => {
+            logger.onEnd();
+          });
       },
     );
 
@@ -1835,7 +2140,8 @@ export class PluginSystem {
         internalProviderId: string,
         params: { [key: string]: unknown },
         loggerId: string,
-        tokenId?: number,
+        tokenId: number | undefined,
+        taskId: number | undefined,
       ): Promise<void> => {
         const logger = this.getLogHandler('provider-registry:taskConnection-onData', loggerId);
         let token;
@@ -1843,14 +2149,33 @@ export class PluginSystem {
           const tokenSource = cancellationTokenRegistry.getCancellationTokenSource(tokenId);
           token = tokenSource?.token;
         }
-        try {
-          await providerRegistry.createContainerProviderConnection(internalProviderId, params, logger, token);
-        } catch (error) {
-          logger.error(error);
-          throw error;
-        } finally {
-          logger.onEnd();
-        }
+
+        const task = taskManager.createTask({
+          title: `Create Container provider`,
+          action: {
+            name: 'Open task',
+            execute: () => {
+              navigationManager
+                .navigateToProviderTask(internalProviderId, taskId)
+                .catch((err: unknown) => console.error(err));
+            },
+          },
+        });
+
+        return providerRegistry
+          .createContainerProviderConnection(internalProviderId, params, logger, token)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((err: unknown) => {
+            task.error = `Something went wrong while trying to create provider: ${err}`;
+            logger.error(err);
+            throw err;
+          })
+          .finally(() => {
+            logger.onEnd();
+          });
       },
     );
 
@@ -1872,7 +2197,8 @@ export class PluginSystem {
         internalProviderId: string,
         params: { [key: string]: unknown },
         loggerId: string,
-        tokenId?: number,
+        tokenId: number | undefined,
+        taskId: number | undefined,
       ): Promise<void> => {
         const logger = this.getLogHandler('provider-registry:taskConnection-onData', loggerId);
         let token;
@@ -1880,14 +2206,33 @@ export class PluginSystem {
           const tokenSource = cancellationTokenRegistry.getCancellationTokenSource(tokenId);
           token = tokenSource?.token;
         }
-        try {
-          await providerRegistry.createKubernetesProviderConnection(internalProviderId, params, logger, token);
-        } catch (error) {
-          logger.error(error);
-          throw error;
-        } finally {
-          logger.onEnd();
-        }
+
+        const task = taskManager.createTask({
+          title: `Create Kubernetes provider`,
+          action: {
+            name: 'Open task',
+            execute: () => {
+              navigationManager
+                .navigateToProviderTask(internalProviderId, taskId)
+                .catch((err: unknown) => console.error(err));
+            },
+          },
+        });
+
+        return providerRegistry
+          .createKubernetesProviderConnection(internalProviderId, params, logger, token)
+          .then(result => {
+            task.status = 'success';
+            return result;
+          })
+          .catch((err: unknown) => {
+            task.error = `Something went wrong while trying to create provider: ${err}`;
+            logger.error(err);
+            throw err;
+          })
+          .finally(() => {
+            logger.onEnd();
+          });
       },
     );
 
@@ -2387,6 +2732,24 @@ export class PluginSystem {
     this.ipcHandle(
       'context:collectAllValues',
       async (): Promise<Record<string, unknown>> => context.collectAllValues(),
+    );
+
+    this.ipcHandle(
+      'docker-compatibility:getSystemDockerSocketMappingStatus',
+      async (): Promise<DockerSocketMappingStatusInfo> => {
+        return dockerCompatibility.getSystemDockerSocketMappingStatus();
+      },
+    );
+
+    this.ipcHandle('docker-compatibility:listDockerContexts', async (): Promise<DockerContextInfo[]> => {
+      return dockerCompatibility.listDockerContexts();
+    });
+
+    this.ipcHandle(
+      'docker-compatibility:switchDockerContext',
+      async (_listener, dockerContextName: string): Promise<void> => {
+        return dockerCompatibility.switchDockerContext(dockerContextName);
+      },
     );
 
     const dockerDesktopInstallation = new DockerDesktopInstallation(

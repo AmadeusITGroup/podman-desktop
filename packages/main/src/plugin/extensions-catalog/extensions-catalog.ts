@@ -127,6 +127,7 @@ export class ExtensionsCatalog {
           publisherName: extension.publisher.publisherName,
           publisherDisplayName: extension.publisher.displayName,
           categories: extension.categories,
+          keywords: extension.keywords,
           unlisted: extension.unlisted ?? false,
           extensionName: extension.extensionName,
           shortDescription: extension.shortDescription,
@@ -156,7 +157,7 @@ export class ExtensionsCatalog {
       // we have a list of extensions
       catalogJSON.extensions.forEach(extension => {
         const notPreviewVersions = extension.versions.filter(v => v.preview !== true);
-        if (notPreviewVersions.length > 0) {
+        if (notPreviewVersions.length > 0 && notPreviewVersions[0]) {
           // take the first version
           fetchableExtensions.push({
             extensionId: `${extension.publisher.publisherName}.${extension.extensionName}`,
@@ -225,6 +226,10 @@ export class ExtensionsCatalog {
             maxFreeSockets: 256,
             scheduling: 'lifo',
             proxy: httpsProxyUrl,
+            ca: this.certificates.getAllCertificates(),
+            proxyRequestOptions: {
+              ca: this.certificates.getAllCertificates(),
+            },
           });
         } catch (error) {
           throw new Error(`Failed to create https proxy agent from ${httpsProxyUrl}: ${error}`);
@@ -246,6 +251,7 @@ interface InternalCatalogExtensionJSON {
   extensionName: string;
   displayName: string;
   categories: string[];
+  keywords: string[];
   unlisted?: boolean;
   shortDescription: string;
   versions: InternalCatalogExtensionVersionJSON[];
